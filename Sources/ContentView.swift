@@ -174,12 +174,17 @@ struct FooterBar: View {
             if model.isExporting {
                 ProgressView(value: model.exportProgress).frame(width: 140)
             } else {
+                Button("All") { model.includeAll() }
+                    .help("Put every clip back in the export")
+                Button("Only This") { model.includeOnlyCurrent() }
+                    .help("Export just the clip under the playhead")
                 Button("Open Another…") { model.choose() }
-                Button("Export \(model.segments.count) Clip\(model.segments.count == 1 ? "" : "s")") {
+                Button("Export \(model.includedCount) Clip\(model.includedCount == 1 ? "" : "s")") {
                     model.exportAll()
                 }
                 .keyboardShortcut("e", modifiers: .command)
                 .buttonStyle(.borderedProminent)
+                .disabled(model.includedCount == 0)
             }
         }
     }
@@ -188,8 +193,10 @@ struct FooterBar: View {
         if !model.status.isEmpty { return model.status }
         let out = CropMath.storySize
         let clip = model.currentSegment
-        return String(format: "Clip %d of %d · %.1fs · out %d×%d",
+        let skipped = model.segments.count - model.includedCount
+        return String(format: "Clip %d of %d · %.1fs · out %d×%d%@",
                       model.currentIndex + 1, model.segments.count, clip.duration,
-                      Int(out.width), Int(out.height))
+                      Int(out.width), Int(out.height),
+                      skipped > 0 ? " · \(skipped) skipped" : "")
     }
 }

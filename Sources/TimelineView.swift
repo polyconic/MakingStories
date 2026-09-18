@@ -17,18 +17,18 @@ struct TimelineView: View {
                     let x = width * clip.start / span
                     let w = max(width * clip.duration / span - 2, 1)
                     RoundedRectangle(cornerRadius: 4)
-                        .fill(Color.accentColor.opacity(i == model.currentIndex ? 0.75 : 0.35))
+                        .fill(fill(index: i, clip: clip))
                         .frame(width: w, height: height - 16)
                         .position(x: x + w / 2 + 1, y: height / 2)
-                        .overlay(alignment: .topLeading) {
-                            Text("\(i + 1)")
-                                .font(.caption2.bold())
-                                .foregroundStyle(.white.opacity(0.9))
-                                .padding(.leading, 6)
-                                .padding(.top, 10)
-                                .offset(x: x)
-                                .allowsHitTesting(false)
-                        }
+                }
+
+                ForEach(Array(model.segments.enumerated()), id: \.element.id) { i, clip in
+                    let x = width * clip.start / span
+                    let w = max(width * clip.duration / span - 2, 1)
+                    if w > 26 {
+                        ClipBadge(number: i + 1, included: clip.included) { model.toggleIncluded(i) }
+                            .position(x: x + 20, y: 18)
+                    }
                 }
 
                 ForEach(Array(model.segments.dropLast().enumerated()), id: \.element.id) { i, clip in
@@ -61,5 +61,33 @@ struct TimelineView: View {
             )
         }
         .frame(height: height)
+    }
+
+    private func fill(index: Int, clip: Segment) -> Color {
+        guard clip.included else { return .white.opacity(index == model.currentIndex ? 0.14 : 0.07) }
+        return .accentColor.opacity(index == model.currentIndex ? 0.75 : 0.35)
+    }
+}
+
+struct ClipBadge: View {
+    let number: Int
+    let included: Bool
+    let toggle: () -> Void
+
+    var body: some View {
+        Button(action: toggle) {
+            HStack(spacing: 3) {
+                Image(systemName: included ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 9, weight: .bold))
+                Text("\(number)").font(.caption2.bold())
+            }
+            .foregroundStyle(included ? Color.white : Color.white.opacity(0.4))
+            .padding(.horizontal, 5)
+            .padding(.vertical, 2)
+            .background(Color.black.opacity(0.3), in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .help(included ? "Click to leave clip \(number) out of the export"
+                       : "Click to put clip \(number) back in the export")
     }
 }

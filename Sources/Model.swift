@@ -8,6 +8,7 @@ struct Segment: Identifiable, Equatable {
     var end: Double
     var offset = CGPoint(x: 0.5, y: 0.5)
     var zoom: CGFloat = 1
+    var included = true
 
     var duration: Double { end - start }
 }
@@ -138,7 +139,8 @@ final class EditorModel: ObservableObject {
     func addMarker(at time: Double) {
         guard let i = segments.firstIndex(where: { $0.start < time && time < $0.end }) else { return }
         guard time - segments[i].start >= minClip, segments[i].end - time >= minClip else { return }
-        let tail = Segment(start: time, end: segments[i].end, offset: segments[i].offset)
+        let tail = Segment(start: time, end: segments[i].end, offset: segments[i].offset,
+                           zoom: segments[i].zoom, included: segments[i].included)
         segments[i].end = time
         segments.insert(tail, at: i + 1)
     }
@@ -161,6 +163,24 @@ final class EditorModel: ObservableObject {
         guard duration > 0 else { return }
         let offset = segments.first?.offset ?? CGPoint(x: 0.5, y: 0.5)
         segments = [Segment(start: 0, end: duration, offset: offset)]
+    }
+
+    // MARK: - Choosing clips
+
+    var includedCount: Int { segments.filter(\.included).count }
+
+    func toggleIncluded(_ i: Int) {
+        guard segments.indices.contains(i) else { return }
+        segments[i].included.toggle()
+    }
+
+    func includeAll() {
+        for i in segments.indices { segments[i].included = true }
+    }
+
+    func includeOnlyCurrent() {
+        let current = currentIndex
+        for i in segments.indices { segments[i].included = (i == current) }
     }
 
     // MARK: - Framing
@@ -227,10 +247,12 @@ final class EditorModel: ObservableObject {
     }
 
     func exportAll() {
-        guard let url, !segments.isEmpty else { return }
+        guard let url else { return }
+        // Output numbering runs over the chosen clips only, so the files come out 01, 02, 03 with no gaps.
+        let clips = segments.filter(\.included)
+        guard !clips.isEmpty else { return }
         isExporting = true
         exportProgress = 0
-        let clips = segments
         let base = exportBase
         Task {
             let folder = desktop.appendingPathComponent("\(base) Story")
