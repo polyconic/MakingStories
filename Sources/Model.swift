@@ -1,0 +1,215 @@
+import AVFoundation
+import AppKit
+import SwiftUI
+
+struct Segment: Identifiable, Equatable {
+    var id = UUID()
+    var start: Double
+    var end: Double
+    var offset = CGPoint(x: 0.5, y: 0.5)
+
+    var duration: Double { end - start }
+}
+
+@MainActor
+final class EditorModel: ObservableObject {
+    @Published var url: URL?
+    @Published var player: AVPlayer?
+    @Published var displaySize: CGSize = .zero
+    @Published var duration: Double = 0
+    @Published var segments: [Segment] = []
+    @Published var currentTime: Double = 0
+    @Published var isPlaying = false
+    @Published var dropTargeted = false
+    @Published var isExporting = false
+    @Published var exportProgress: Double = 0
+    @Published var status = ""
+
+    /// Segment boundaries can't be dragged closer together than this.
+    private let minClip: Double = 0.5
+    private var timeObserver: Any?
+    private var cropDragStart: CGPoint?
+
+    var currentIndex: Int {
+        segments.firstIndex { $0.start <= currentTime && currentTime < $0.end }
+            ?? max(segments.count - 1, 0)
+    }
+
+    var currentSegment: Segment {
+        segments.indices.contains(currentIndex) ? segments[currentIndex] : Segment(start: 0, end: 0)
+    }
+
+    // MARK: - Loading
+
+    func choose() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.movie]
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        if panel.runModal() == .OK, let url = panel.url { load(url) }
+    }
+
+    func load(_ url: URL) {
+        status = "Loading…"
+        Task {
+            do {
+                let info = try await Exporter.probe(url)
+                teardownObserver()
+                let player = AVPlayer(url: url)
+                self.url = url
+                self.player = player
+                self.displaySize = info.displaySize
+                self.duration = info.duration
+                self.currentTime = 0
+                self.isPlaying = false
+                self.status = ""
+                splitEvery(30)
+                observe(player)
+            } catch {
+                status = error.localizedDescription
+            }
+        }
+    }
+
+    private func observe(_ player: AVPlayer) {
+        timeObserver = player.addPeriodicTimeObserver(
+            forInterval: CMTime(value: 1, timescale: 30), queue: .main
+        ) { [weak self] time in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.currentTime = time.seconds
+                if self.isPlaying, time.seconds >= self.duration - 0.05 {
+                    player.pause()
+                    self.isPlaying = false
+                }
+            }
+        }
+    }
+
+    private func teardownObserver() {
+        if let timeObserver { player?.removeTimeObserver(timeObserver) }
+        timeObserver = nil
+    }
+
+    // MARK: - Playback
+
+    func togglePlay() {
+        guard let player else { return }
+        if isPlaying {
+            player.pause()
+        } else {
+            if currentTime >= duration - 0.05 { seek(to: 0) }
+            player.play()
+        }
+        isPlaying.toggle()
+    }
+
+    func seek(to time: Double) {
+        let t = min(max(time, 0), duration)
+        currentTime = t
+        player?.seek(to: CMTime(seconds: t, preferredTimescale: 600),
+                     toleranceBefore: .zero, toleranceAfter: .zero)
+    }
+
+    // MARK: - Markers
+
+    func splitEvery(_ interval: Double) {
+        guard duration > 0 else { return }
+        var bounds = Array(stride(from: 0, to: duration, by: interval))
+        bounds.append(duration)
+        // A stub of a final clip is tidier merged into the one before it.
+        if bounds.count > 2, bounds[bounds.count - 1] - bounds[bounds.count - 2] < interval * 0.25 {
+            bounds.remove(at: bounds.count - 2)
+        }
+        segments = zip(bounds, bounds.dropFirst()).map { Segment(start: $0, end: $1) }
+    }
+
+    func addMarker(at time: Double) {
+        guard let i = segments.firstIndex(where: { $0.start < time && time < $0.end }) else { return }
+        guard time - segments[i].start >= minClip, segments[i].end - time >= minClip else { return }
+        let tail = Segment(start: time, end: segments[i].end, offset: segments[i].offset)
+        segments[i].end = time
+        segments.insert(tail, at: i + 1)
+    }
+
+    /// Removes the boundary between segment `i` and `i + 1`, merging them.
+    func removeMarker(after i: Int) {
+        guard segments.indices.contains(i), segments.indices.contains(i + 1) else { return }
+        segments[i].end = segments[i + 1].end
+        segments.remove(at: i + 1)
+    }
+
+    func moveMarker(after i: Int, to time: Double) {
+        guard segments.indices.contains(i), segments.indices.contains(i + 1) else { return }
+        let t = min(max(time, segments[i].start + minClip), segments[i + 1].end - minClip)
+        segments[i].end = t
+        segments[i + 1].start = t
+    }
+
+    func clearMarkers() {
+        guard duration > 0 else { return }
+        let offset = segments.first?.offset ?? CGPoint(x: 0.5, y: 0.5)
+        segments = [Segment(start: 0, end: duration, offset: offset)]
+    }
+
+    // MARK: - Framing
+
+    /// Drag translation is in view points; slack is the room the crop has to move there.
+    func dragCrop(by translation: CGSize, slack: CGSize) {
+        guard segments.indices.contains(currentIndex) else { return }
+        let start = cropDragStart ?? segments[currentIndex].offset
+        cropDragStart = start
+        var offset = start
+        if slack.width > 0.5 { offset.x = start.x + translation.width / slack.width }
+        if slack.height > 0.5 { offset.y = start.y + translation.height / slack.height }
+        segments[currentIndex].offset = CGPoint(x: min(max(offset.x, 0), 1),
+                                                y: min(max(offset.y, 0), 1))
+    }
+
+    func endCropDrag() { cropDragStart = nil }
+
+    func centerCurrent() {
+        guard segments.indices.contains(currentIndex) else { return }
+        segments[currentIndex].offset = CGPoint(x: 0.5, y: 0.5)
+    }
+
+    func applyFramingToAll() {
+        let offset = currentSegment.offset
+        for i in segments.indices { segments[i].offset = offset }
+    }
+
+    // MARK: - Export
+
+    func exportAll() {
+        guard let url, !segments.isEmpty else { return }
+        isExporting = true
+        exportProgress = 0
+        let clips = segments
+        Task {
+            let base = url.deletingPathExtension().lastPathComponent
+            let folder = url.deletingLastPathComponent().appendingPathComponent("\(base) Story")
+            try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+
+            var failed = 0
+            for (i, clip) in clips.enumerated() {
+                status = "Exporting clip \(i + 1) of \(clips.count)…"
+                let output = folder.appendingPathComponent(String(format: "%@_%02d.mp4", base, i + 1))
+                let range = CMTimeRange(start: CMTime(seconds: clip.start, preferredTimescale: 600),
+                                        end: CMTime(seconds: clip.end, preferredTimescale: 600))
+                do {
+                    try await Exporter.export(source: url, range: range, offset: clip.offset, to: output)
+                } catch {
+                    failed += 1
+                    status = "Clip \(i + 1): \(error.localizedDescription)"
+                }
+                exportProgress = Double(i + 1) / Double(clips.count)
+            }
+
+            isExporting = false
+            status = failed == 0
+                ? "Exported \(clips.count) clip\(clips.count == 1 ? "" : "s") to \(folder.lastPathComponent)"
+                : "\(clips.count - failed) of \(clips.count) exported, \(failed) failed"
+            NSWorkspace.shared.activateFileViewerSelecting([folder])
+        }
+    }
+}
