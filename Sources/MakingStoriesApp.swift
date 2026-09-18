@@ -3,11 +3,11 @@ import AppKit
 import SwiftUI
 
 @main
-struct FrameApp: App {
+struct MakingStoriesApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
 
     var body: some Scene {
-        Window("Frame", id: "main") {
+        Window("MakingStories", id: "main") {
             ContentView()
                 .environmentObject(delegate.model)
                 .frame(minWidth: 860, minHeight: 620)
@@ -42,7 +42,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
-    /// `Frame --export <in> <out> <start> <end> <offsetX> <offsetY>` — one clip, no window.
+    /// `MakingStories --export <in> <out> <start> <end> <offsetX> <offsetY>` — one clip, no window.
     private func headless(source: URL, output: URL, start: Double, end: Double, offset: CGPoint) {
         Task {
             do {

@@ -1,9 +1,9 @@
 #!/bin/bash
-# Builds Frame.app.
+# Builds MakingStories.app.
 set -euo pipefail
 
-APP_NAME="Frame"
-BUNDLE_ID="com.gregoregan.frame"
+APP_NAME="MakingStories"
+BUNDLE_ID="com.gregoregan.makingstories"
 VERSION="1.0"
 MIN_MACOS="15.0"
 

@@ -1,7 +1,7 @@
 import AVFoundation
 import Foundation
 
-struct FrameError: LocalizedError {
+struct StoryError: LocalizedError {
     let message: String
     init(_ message: String) { self.message = message }
     var errorDescription: String? { message }
@@ -16,7 +16,7 @@ enum Exporter {
     static func probe(_ url: URL) async throws -> VideoInfo {
         let asset = AVURLAsset(url: url)
         guard let track = try await asset.loadTracks(withMediaType: .video).first else {
-            throw FrameError("No video track in that file.")
+            throw StoryError("No video track in that file.")
         }
         let (natural, transform) = try await track.load(.naturalSize, .preferredTransform)
         let duration = try await asset.load(.duration)
@@ -29,7 +29,7 @@ enum Exporter {
     static func export(source: URL, range: CMTimeRange, offset: CGPoint, to output: URL) async throws {
         let asset = AVURLAsset(url: source)
         guard let track = try await asset.loadTracks(withMediaType: .video).first else {
-            throw FrameError("No video track in that file.")
+            throw StoryError("No video track in that file.")
         }
         let (natural, transform, minFrame) = try await track.load(.naturalSize, .preferredTransform,
                                                                   .minFrameDuration)
@@ -39,7 +39,7 @@ enum Exporter {
         let display = CGSize(width: abs(oriented.width), height: abs(oriented.height))
         let crop = CropMath.cropRect(source: display, offset: offset)
         let render = CropMath.storySize
-        guard crop.width > 0 else { throw FrameError("Can't work out a crop for that video.") }
+        guard crop.width > 0 else { throw StoryError("Can't work out a crop for that video.") }
 
         // Oriented pixels to the render canvas: normalize, shift the crop to the origin, fill.
         let t = transform
@@ -62,7 +62,7 @@ enum Exporter {
         videoComposition.instructions = [instruction]
 
         guard let session = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetHighestQuality) else {
-            throw FrameError("Can't create an export session.")
+            throw StoryError("Can't create an export session.")
         }
         session.videoComposition = videoComposition
         session.timeRange = range

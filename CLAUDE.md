@@ -1,8 +1,8 @@
-# Frame
+# MakingStories
 
 Drop a video in, it cuts into 30-second story clips, drag to reframe each one to 9:16, export.
 
-`./build.sh` → `build/Frame.app`. Plain `swiftc`, Command Line Tools only, no Xcode, ad-hoc signed,
+`./build.sh` → `build/MakingStories.app`. Plain `swiftc`, Command Line Tools only, no Xcode, ad-hoc signed,
 Apple Silicon — same layout as crate and nyquist.
 
 ## Constraints
@@ -34,7 +34,7 @@ Change `CropMath.storySize` if that call turns out wrong.
 Headless, which is how the crop math gets tested:
 
 ```
-Frame.app/Contents/MacOS/Frame --export <in> <out> <startSec> <endSec> <offsetX> <offsetY>
+MakingStories.app/Contents/MacOS/MakingStories --export <in> <out> <startSec> <endSec> <offsetX> <offsetY>
 ```
 
 Exports land in `<video name> Story/` next to the source, as `<video name>_01.mp4`.
