@@ -17,9 +17,13 @@ time math silently comes out wrong. Both timeline gestures use `.named("timeline
 
 ## Crop and export
 
-`Segment.offset` is normalized 0...1 along whichever axis has slack — 0.5 centered. Landscape
-sources only have x slack, tall sources only y. `CropMath.cropRect` is the single source of truth
-and drives both the preview overlay and the export, so what the white box shows is what renders.
+`Segment.offset` is normalized 0...1 along whichever axis has slack — 0.5 centered. `Segment.zoom`
+is 1 when the story frame is filled edge to edge; above 1 punches in, and below 1 lets the crop rect
+grow past the source, which is what puts bars around the footage. An axis whose slack has gone
+negative centers itself, because there is nothing left to choose there.
+
+`CropMath.cropRect` is the single source of truth and drives both the preview overlay and the
+export, so what the white box shows is what renders.
 
 The export transform works in **top-left, y-down** coordinates and needs no y-flip. This was
 verified, not assumed: color-banded test videos exported at offsets 0 and 1 on both axes, then
@@ -34,7 +38,8 @@ Change `CropMath.storySize` if that call turns out wrong.
 Headless, which is how the crop math gets tested:
 
 ```
-MakingStories.app/Contents/MacOS/MakingStories --export <in> <out> <startSec> <endSec> <offsetX> <offsetY>
+MakingStories.app/Contents/MacOS/MakingStories --export <in> <out> <startSec> <endSec> <offsetX> <offsetY> [zoom]
 ```
 
-Exports land in `<video name> Story/` next to the source, as `<video name>_01.mp4`.
+Exports land in `<name> Story/` on the Desktop, as `<name>_01.mp4`, where the name is the editable
+field in the footer. No Finder window is opened afterwards — that was deliberate, not an oversight.
