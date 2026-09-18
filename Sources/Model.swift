@@ -7,6 +7,7 @@ struct Segment: Identifiable, Equatable {
     var start: Double
     var end: Double
     var offset = CGPoint(x: 0.5, y: 0.5)
+    var zoom: CGFloat = 1
 
     var duration: Double { end - start }
 }
@@ -20,6 +21,8 @@ final class EditorModel: ObservableObject {
     @Published var segments: [Segment] = []
     @Published var currentTime: Double = 0
     @Published var isPlaying = false
+    @Published var isMuted = false
+    @Published var exportName = ""
     @Published var dropTargeted = false
     @Published var isExporting = false
     @Published var exportProgress: Double = 0
@@ -29,6 +32,7 @@ final class EditorModel: ObservableObject {
     private let minClip: Double = 0.5
     private var timeObserver: Any?
     private var cropDragStart: CGPoint?
+    private var pinchStartZoom: CGFloat?
 
     var currentIndex: Int {
         segments.firstIndex { $0.start <= currentTime && currentTime < $0.end }
@@ -56,12 +60,14 @@ final class EditorModel: ObservableObject {
                 let info = try await Exporter.probe(url)
                 teardownObserver()
                 let player = AVPlayer(url: url)
+                player.isMuted = self.isMuted
                 self.url = url
                 self.player = player
                 self.displaySize = info.displaySize
                 self.duration = info.duration
                 self.currentTime = 0
                 self.isPlaying = false
+                self.exportName = url.deletingPathExtension().lastPathComponent
                 self.status = ""
                 splitEvery(30)
                 observe(player)
@@ -102,6 +108,11 @@ final class EditorModel: ObservableObject {
             player.play()
         }
         isPlaying.toggle()
+    }
+
+    func toggleMute() {
+        isMuted.toggle()
+        player?.isMuted = isMuted
     }
 
     func seek(to time: Double) {
@@ -168,26 +179,61 @@ final class EditorModel: ObservableObject {
 
     func endCropDrag() { cropDragStart = nil }
 
-    func centerCurrent() {
+    func setZoom(_ zoom: CGFloat) {
+        guard segments.indices.contains(currentIndex) else { return }
+        segments[currentIndex].zoom = min(max(zoom, CropMath.zoomRange.lowerBound),
+                                          CropMath.zoomRange.upperBound)
+    }
+
+    func nudgeZoom(_ factor: CGFloat) {
+        setZoom(currentSegment.zoom * factor)
+    }
+
+    /// Trackpad pinch: magnification is cumulative from the gesture's start, not per-event.
+    func pinchZoom(_ magnification: CGFloat) {
+        let start = pinchStartZoom ?? currentSegment.zoom
+        pinchStartZoom = start
+        setZoom(start * magnification)
+    }
+
+    func endPinch() { pinchStartZoom = nil }
+
+    func resetFraming() {
         guard segments.indices.contains(currentIndex) else { return }
         segments[currentIndex].offset = CGPoint(x: 0.5, y: 0.5)
+        segments[currentIndex].zoom = 1
     }
 
     func applyFramingToAll() {
-        let offset = currentSegment.offset
-        for i in segments.indices { segments[i].offset = offset }
+        let (offset, zoom) = (currentSegment.offset, currentSegment.zoom)
+        for i in segments.indices {
+            segments[i].offset = offset
+            segments[i].zoom = zoom
+        }
     }
 
     // MARK: - Export
+
+    var exportBase: String {
+        let cleaned = exportName.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "/", with: "-")
+            .replacingOccurrences(of: ":", with: "-")
+        return cleaned.isEmpty ? "Story" : cleaned
+    }
+
+    private var desktop: URL {
+        FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask).first
+            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Desktop")
+    }
 
     func exportAll() {
         guard let url, !segments.isEmpty else { return }
         isExporting = true
         exportProgress = 0
         let clips = segments
+        let base = exportBase
         Task {
-            let base = url.deletingPathExtension().lastPathComponent
-            let folder = url.deletingLastPathComponent().appendingPathComponent("\(base) Story")
+            let folder = desktop.appendingPathComponent("\(base) Story")
             try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
 
             var failed = 0
@@ -197,7 +243,8 @@ final class EditorModel: ObservableObject {
                 let range = CMTimeRange(start: CMTime(seconds: clip.start, preferredTimescale: 600),
                                         end: CMTime(seconds: clip.end, preferredTimescale: 600))
                 do {
-                    try await Exporter.export(source: url, range: range, offset: clip.offset, to: output)
+                    try await Exporter.export(source: url, range: range, offset: clip.offset,
+                                              zoom: clip.zoom, to: output)
                 } catch {
                     failed += 1
                     status = "Clip \(i + 1): \(error.localizedDescription)"
@@ -207,9 +254,8 @@ final class EditorModel: ObservableObject {
 
             isExporting = false
             status = failed == 0
-                ? "Exported \(clips.count) clip\(clips.count == 1 ? "" : "s") to \(folder.lastPathComponent)"
+                ? "Exported \(clips.count) clip\(clips.count == 1 ? "" : "s") to Desktop / \(folder.lastPathComponent)"
                 : "\(clips.count - failed) of \(clips.count) exported, \(failed) failed"
-            NSWorkspace.shared.activateFileViewerSelecting([folder])
         }
     }
 }

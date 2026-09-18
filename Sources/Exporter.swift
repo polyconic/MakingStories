@@ -26,7 +26,8 @@ enum Exporter {
     }
 
     /// Renders `range` of `source` cropped to a story frame positioned by `offset`.
-    static func export(source: URL, range: CMTimeRange, offset: CGPoint, to output: URL) async throws {
+    static func export(source: URL, range: CMTimeRange, offset: CGPoint, zoom: CGFloat = 1,
+                       to output: URL) async throws {
         let asset = AVURLAsset(url: source)
         guard let track = try await asset.loadTracks(withMediaType: .video).first else {
             throw StoryError("No video track in that file.")
@@ -37,7 +38,7 @@ enum Exporter {
 
         let oriented = CGRect(origin: .zero, size: natural).applying(transform)
         let display = CGSize(width: abs(oriented.width), height: abs(oriented.height))
-        let crop = CropMath.cropRect(source: display, offset: offset)
+        let crop = CropMath.cropRect(source: display, offset: offset, zoom: zoom)
         let render = CropMath.storySize
         guard crop.width > 0 else { throw StoryError("Can't work out a crop for that video.") }
 

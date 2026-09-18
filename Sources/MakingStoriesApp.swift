@@ -33,7 +33,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                  output: URL(fileURLWithPath: args[i + 2]),
                  start: Double(args[i + 3]) ?? 0,
                  end: Double(args[i + 4]) ?? 0,
-                 offset: CGPoint(x: Double(args[i + 5]) ?? 0.5, y: Double(args[i + 6]) ?? 0.5))
+                 offset: CGPoint(x: Double(args[i + 5]) ?? 0.5, y: Double(args[i + 6]) ?? 0.5),
+                 zoom: args.count > i + 7 ? CGFloat(Double(args[i + 7]) ?? 1) : 1)
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {
@@ -42,13 +43,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
-    /// `MakingStories --export <in> <out> <start> <end> <offsetX> <offsetY>` — one clip, no window.
-    private func headless(source: URL, output: URL, start: Double, end: Double, offset: CGPoint) {
+    /// `MakingStories --export <in> <out> <start> <end> <offsetX> <offsetY> [zoom]` — one clip, no window.
+    private func headless(source: URL, output: URL, start: Double, end: Double,
+                          offset: CGPoint, zoom: CGFloat) {
         Task {
             do {
                 let range = CMTimeRange(start: CMTime(seconds: start, preferredTimescale: 600),
                                         end: CMTime(seconds: end, preferredTimescale: 600))
-                try await Exporter.export(source: source, range: range, offset: offset, to: output)
+                try await Exporter.export(source: source, range: range, offset: offset,
+                                          zoom: zoom, to: output)
                 print(output.path)
             } catch {
                 print("failed: \(error.localizedDescription)")

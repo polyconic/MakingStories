@@ -45,7 +45,8 @@ struct PreviewView: View {
         GeometryReader { geo in
             let video = CropMath.videoRect(container: geo.size, content: model.displaySize)
             let scale = model.displaySize.width > 0 ? video.width / model.displaySize.width : 1
-            let source = CropMath.cropRect(source: model.displaySize, offset: model.currentSegment.offset)
+            let source = CropMath.cropRect(source: model.displaySize, offset: model.currentSegment.offset,
+                                           zoom: model.currentSegment.zoom)
             let crop = CGRect(x: video.minX + source.minX * scale, y: video.minY + source.minY * scale,
                               width: source.width * scale, height: source.height * scale)
             let slack = CGSize(width: video.width - crop.width, height: video.height - crop.height)
@@ -68,6 +69,11 @@ struct PreviewView: View {
                 DragGesture(minimumDistance: 0)
                     .onChanged { model.dragCrop(by: $0.translation, slack: slack) }
                     .onEnded { _ in model.endCropDrag() }
+            )
+            .simultaneousGesture(
+                MagnifyGesture()
+                    .onChanged { model.pinchZoom($0.magnification) }
+                    .onEnded { _ in model.endPinch() }
             )
         }
         .background(Color.black)

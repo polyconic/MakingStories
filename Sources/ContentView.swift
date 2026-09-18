@@ -63,12 +63,19 @@ struct TransportBar: View {
     @EnvironmentObject var model: EditorModel
 
     var body: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: 12) {
             Button { model.togglePlay() } label: {
                 Image(systemName: model.isPlaying ? "pause.fill" : "play.fill").frame(width: 14)
             }
             .keyboardShortcut(.space, modifiers: [])
             .help("Play or pause (Space)")
+
+            Button { model.toggleMute() } label: {
+                Image(systemName: model.isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                    .frame(width: 16)
+            }
+            .keyboardShortcut("k", modifiers: [])
+            .help(model.isMuted ? "Unmute preview (K)" : "Mute preview (K)")
 
             Text("\(time(model.currentTime)) / \(time(model.duration))")
                 .font(.caption.monospacedDigit())
@@ -86,10 +93,12 @@ struct TransportBar: View {
 
             Spacer()
 
-            Button("Center") { model.centerCurrent() }
-                .help("Center the framing on this clip")
-            Button("Apply Framing to All") { model.applyFramingToAll() }
-                .help("Give every clip this clip's framing")
+            ZoomControl()
+
+            Button("Reset") { model.resetFraming() }
+                .help("Center this clip and set zoom back to 100%")
+            Button("Apply to All") { model.applyFramingToAll() }
+                .help("Give every clip this clip's framing and zoom")
         }
     }
 
@@ -99,13 +108,59 @@ struct TransportBar: View {
     }
 }
 
+struct ZoomControl: View {
+    @EnvironmentObject var model: EditorModel
+
+    /// The slider is logarithmic so 100% sits at the middle of the track.
+    private var slider: Binding<Double> {
+        Binding(
+            get: {
+                let low = CropMath.zoomRange.lowerBound, high = CropMath.zoomRange.upperBound
+                return log(Double(model.currentSegment.zoom / low)) / log(Double(high / low))
+            },
+            set: { t in
+                let low = CropMath.zoomRange.lowerBound, high = CropMath.zoomRange.upperBound
+                model.setZoom(low * pow(high / low, CGFloat(t)))
+            }
+        )
+    }
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Button { model.nudgeZoom(1 / 1.15) } label: {
+                Image(systemName: "minus.magnifyingglass")
+            }
+            .keyboardShortcut("-", modifiers: .command)
+            .help("Zoom out (⌘−)")
+
+            Slider(value: slider, in: 0...1).frame(width: 110)
+
+            Button { model.nudgeZoom(1.15) } label: {
+                Image(systemName: "plus.magnifyingglass")
+            }
+            .keyboardShortcut("=", modifiers: .command)
+            .help("Zoom in (⌘+), or pinch on the video")
+
+            Text("\(Int((model.currentSegment.zoom * 100).rounded()))%")
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+                .frame(width: 40, alignment: .trailing)
+        }
+    }
+}
+
 struct FooterBar: View {
     @EnvironmentObject var model: EditorModel
 
     var body: some View {
         HStack(spacing: 12) {
+            TextField("Name", text: $model.exportName)
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 170)
+                .help("Clips are named after this")
+
             VStack(alignment: .leading, spacing: 2) {
-                Text(model.url?.lastPathComponent ?? "")
+                Text("\(model.exportBase)_01.mp4 → Desktop")
                     .font(.caption.bold())
                     .lineLimit(1)
                 Text(detail)
@@ -133,7 +188,8 @@ struct FooterBar: View {
         if !model.status.isEmpty { return model.status }
         let out = CropMath.storySize
         let clip = model.currentSegment
-        return String(format: "Clip %d · %.1fs · out %d×%d",
-                      model.currentIndex + 1, clip.duration, Int(out.width), Int(out.height))
+        return String(format: "Clip %d of %d · %.1fs · out %d×%d",
+                      model.currentIndex + 1, model.segments.count, clip.duration,
+                      Int(out.width), Int(out.height))
     }
 }
