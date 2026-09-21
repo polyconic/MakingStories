@@ -35,6 +35,16 @@ Output is always 1080x1920, even when the crop is smaller than that and it means
 every story platform re-encodes to that spec anyway, and a clean local upscale beats theirs.
 Change `CropMath.storySize` if that call turns out wrong.
 
+## Undo
+
+Every edit is a snapshot of `segments` registered with the **window's** `UndoManager`, not a
+private stack — that way ⌘Z comes off the standard Edit menu and a focused text field keeps its
+own undo through the responder chain. Registering an undo from inside an undo is what gives redo.
+
+Anything that mutates `segments` must call `snapshot(_:)` first. Continuous gestures snapshot once
+when they begin — `cropDragStart == nil`, `draggingMarker != i`, the slider's `onEditingChanged` —
+or a single drag would bury the stack under dozens of steps.
+
 ## Panning: tracked or keyframed
 
 `Segment.pan` is a list of `TrackPoint`s, and `panIsManual` says who put them there. Automatic
