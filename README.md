@@ -2,7 +2,7 @@
 
 Turns one long video into story-sized vertical clips.
 
-Final Cut does this, but it's overkill and it's tedious: a ten-minute video becomes twenty
+Any video editor does this, but most of the time it's overkill and it's tedious: a ten-minute video becomes twenty
 30-second clips, and every one of them needs the frame moved so the subject is actually inside
 a 9:16 crop. This does only that job. Drop a video in, it cuts at 30 seconds, you frame each
 clip, you export.
