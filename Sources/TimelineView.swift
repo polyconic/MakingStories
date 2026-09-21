@@ -47,6 +47,18 @@ struct TimelineView: View {
                         .help("Drag to move this cut, double-click to remove it")
                 }
 
+                ForEach(Array(model.segments.enumerated()), id: \.element.id) { i, clip in
+                    if clip.panIsManual {
+                        ForEach(clip.pan, id: \.time) { key in
+                            KeyframeDiamond()
+                                .position(x: width * key.time / span, y: height - 12)
+                                .onTapGesture { model.seek(to: key.time) }
+                                .onTapGesture(count: 2) { model.removeKeyframe(clip: i, at: key.time) }
+                                .help("Keyframe — click to jump here, double-click to remove")
+                        }
+                    }
+                }
+
                 Rectangle()
                     .fill(Color.red)
                     .frame(width: 2, height: height)
@@ -66,6 +78,20 @@ struct TimelineView: View {
     private func fill(index: Int, clip: Segment) -> Color {
         guard clip.included else { return .white.opacity(index == model.currentIndex ? 0.14 : 0.07) }
         return .accentColor.opacity(index == model.currentIndex ? 0.75 : 0.35)
+    }
+}
+
+struct KeyframeDiamond: View {
+    var body: some View {
+        ZStack {
+            Color.clear.frame(width: 18, height: 18)
+            Rectangle()
+                .fill(Color.white)
+                .frame(width: 8, height: 8)
+                .rotationEffect(.degrees(45))
+                .shadow(color: .black.opacity(0.6), radius: 1)
+        }
+        .contentShape(Rectangle())
     }
 }
 

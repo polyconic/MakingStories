@@ -42,6 +42,15 @@ enum CropMath {
             y: slack.height > 0 ? clamp((point.y - crop.height / 2) / slack.height) : 0.5)
     }
 
+    /// The inverse: which subject point a given framing is centered on. Lets a frame positioned
+    /// by hand be stored the same way a tracked one is.
+    static func subject(centeredBy offset: CGPoint, source: CGSize,
+                        aspect: CGFloat = storyAspect, zoom: CGFloat = 1) -> CGPoint {
+        guard source.width > 0, source.height > 0 else { return CGPoint(x: 0.5, y: 0.5) }
+        let crop = cropRect(source: source, aspect: aspect, offset: offset, zoom: zoom)
+        return CGPoint(x: crop.midX / source.width, y: crop.midY / source.height)
+    }
+
     static func clamp(_ v: CGFloat) -> CGFloat { min(max(v, 0), 1) }
 
     /// Where an aspect-fit video sits inside its container.

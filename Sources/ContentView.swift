@@ -48,8 +48,9 @@ struct EditorView: View {
             PreviewView()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-            VStack(spacing: 12) {
+            VStack(spacing: 10) {
                 TransportBar()
+                FramingBar()
                 TimelineView()
                 FooterBar()
             }
@@ -74,8 +75,8 @@ struct TransportBar: View {
                 Image(systemName: model.isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")
                     .frame(width: 16)
             }
-            .keyboardShortcut("k", modifiers: [])
-            .help(model.isMuted ? "Unmute preview (K)" : "Mute preview (K)")
+            .keyboardShortcut("s", modifiers: [])
+            .help(model.isMuted ? "Unmute preview (S)" : "Mute preview (S)")
 
             Text("\(time(model.currentTime)) / \(time(model.duration))")
                 .font(.caption.monospacedDigit())
@@ -93,28 +94,53 @@ struct TransportBar: View {
 
             Spacer()
 
-            ZoomControl()
-
-            if model.isTracking {
-                ProgressView(value: model.trackProgress).frame(width: 70)
-            } else if model.currentSegment.isTracked {
-                Button("Untrack") { model.clearTrack() }
-                    .help("Stop following the subject and go back to a fixed frame")
-            } else {
-                Button("Track") { model.trackCurrent() }
-                    .help("Follow the subject through this clip")
-            }
-
-            Button("Reset") { model.resetFraming() }
-                .help("Center this clip, set zoom back to 100%, and drop any tracking")
-            Button("Apply to All") { model.applyFramingToAll() }
-                .help("Give every clip this clip's framing and zoom")
+            Text(framingState)
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
+    }
+
+    private var framingState: String {
+        let clip = model.currentSegment
+        if clip.isTracked { return "following subject" }
+        if clip.panIsManual { return "\(clip.pan.count) keyframe\(clip.pan.count == 1 ? "" : "s")" }
+        return "fixed frame"
     }
 
     private func time(_ t: Double) -> String {
         guard t.isFinite, t >= 0 else { return "0:00" }
         return String(format: "%d:%02d", Int(t) / 60, Int(t) % 60)
+    }
+}
+
+struct FramingBar: View {
+    @EnvironmentObject var model: EditorModel
+
+    var body: some View {
+        HStack(spacing: 12) {
+            ZoomControl()
+
+            Spacer()
+
+            if model.isTracking {
+                ProgressView(value: model.trackProgress).frame(width: 90)
+                Text("following…").font(.caption).foregroundStyle(.secondary)
+            } else {
+                Button("Track") { model.trackCurrent() }
+                    .help("Find the subject and follow it through this clip")
+                Button("Keyframe") { model.addKeyframe() }
+                    .keyboardShortcut("k", modifiers: [])
+                    .help("Pin this framing at the playhead (K), then move the playhead and drag the frame")
+                if model.currentSegment.hasPan {
+                    Button("Clear Pan") { model.clearPan() }
+                        .help("Drop the tracking or keyframes and hold one fixed frame")
+                }
+                Button("Reset") { model.resetFraming() }
+                    .help("Center this clip, zoom back to 100%, and drop any pan")
+                Button("Apply to All") { model.applyFramingToAll() }
+                    .help("Give every clip this clip's framing and zoom")
+            }
+        }
     }
 }
 

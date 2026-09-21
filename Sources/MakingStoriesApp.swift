@@ -47,7 +47,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             panHeadless(source: URL(fileURLWithPath: args[i + 1]),
                         output: URL(fileURLWithPath: args[i + 2]),
-                        start: start, end: end, track: points)
+                        start: start, end: end, pan: points)
             return
         }
         guard let i = args.firstIndex(of: "--export"), args.count > i + 6 else { return }
@@ -66,13 +66,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
     private func panHeadless(source: URL, output: URL, start: Double, end: Double,
-                             track: [TrackPoint]) {
+                             pan: [TrackPoint]) {
         Task {
             do {
                 let range = CMTimeRange(start: CMTime(seconds: start, preferredTimescale: 600),
                                         end: CMTime(seconds: end, preferredTimescale: 600))
                 try await Exporter.export(source: source, range: range,
-                                          offset: CGPoint(x: 0.5, y: 0.5), track: track, to: output)
+                                          offset: CGPoint(x: 0.5, y: 0.5), pan: pan, to: output)
                 print(output.path)
             } catch {
                 print("failed: \(error.localizedDescription)")
@@ -93,7 +93,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     print(String(format: "  t=%.2f subject=(%.3f, %.3f)", p.time, p.subject.x, p.subject.y))
                 }
                 try await Exporter.export(source: source, range: range,
-                                          offset: CGPoint(x: 0.5, y: 0.5), track: points, to: output)
+                                          offset: CGPoint(x: 0.5, y: 0.5), pan: points, to: output)
                 print(output.path)
             } catch {
                 print("failed: \(error.localizedDescription)")

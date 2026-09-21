@@ -9,21 +9,26 @@ struct Segment: Identifiable, Equatable {
     var offset = CGPoint(x: 0.5, y: 0.5)
     var zoom: CGFloat = 1
     var included = true
-    var track: [TrackPoint] = []
+
+    /// The pan over time. Either found by the tracker or set by hand — same shape either way,
+    /// so playback and export don't care which made it.
+    var pan: [TrackPoint] = []
+    var panIsManual = false
 
     var duration: Double { end - start }
-    var isTracked: Bool { track.count >= 2 }
+    var hasPan: Bool { !pan.isEmpty }
+    var isTracked: Bool { hasPan && !panIsManual }
 
-    /// Where the frame sits at a given moment — the fixed offset, or the tracked pan.
+    /// Where the frame sits at a given moment — the fixed offset, or the pan.
     func offset(at time: Double, source: CGSize) -> CGPoint {
-        guard isTracked else { return offset }
+        guard hasPan else { return offset }
         return CropMath.offset(centering: subject(at: time), source: source, zoom: zoom)
     }
 
     private func subject(at time: Double) -> CGPoint {
-        if time <= track[0].time { return track[0].subject }
-        guard let i = track.firstIndex(where: { $0.time > time }) else { return track[track.count - 1].subject }
-        let (a, b) = (track[i - 1], track[i])
+        if time <= pan[0].time { return pan[0].subject }
+        guard let i = pan.firstIndex(where: { $0.time > time }) else { return pan[pan.count - 1].subject }
+        let (a, b) = (pan[i - 1], pan[i])
         let t = (time - a.time) / max(b.time - a.time, 0.0001)
         return CGPoint(x: a.subject.x + (b.subject.x - a.subject.x) * t,
                        y: a.subject.y + (b.subject.y - a.subject.y) * t)
@@ -207,22 +212,71 @@ final class EditorModel: ObservableObject {
     /// Drag translation is in view points; slack is the room the crop has to move there.
     func dragCrop(by translation: CGSize, slack: CGSize) {
         guard segments.indices.contains(currentIndex) else { return }
-        // Grabbing the frame takes it back off the tracker, starting from wherever the pan is now.
-        if segments[currentIndex].isTracked {
-            segments[currentIndex].offset = segments[currentIndex].offset(at: currentTime,
-                                                                          source: displaySize)
-            segments[currentIndex].track = []
+        let i = currentIndex
+
+        if cropDragStart == nil {
+            // Pick up from whatever is on screen, then decide what the drag means.
+            segments[i].offset = segments[i].offset(at: currentTime, source: displaySize)
+            // An automatic pan is replaced by the hand on the frame; hand-set keys are kept
+            // and edited, the way an editor's auto-keyframe does it.
+            if segments[i].isTracked { segments[i].pan = [] }
+            cropDragStart = segments[i].offset
         }
-        let start = cropDragStart ?? segments[currentIndex].offset
-        cropDragStart = start
+        guard let start = cropDragStart else { return }
+
         var offset = start
         if slack.width > 0.5 { offset.x = start.x + translation.width / slack.width }
         if slack.height > 0.5 { offset.y = start.y + translation.height / slack.height }
-        segments[currentIndex].offset = CGPoint(x: min(max(offset.x, 0), 1),
-                                                y: min(max(offset.y, 0), 1))
+        offset = CGPoint(x: CropMath.clamp(offset.x), y: CropMath.clamp(offset.y))
+        segments[i].offset = offset
+        if segments[i].panIsManual { setKey(on: i, at: currentTime, offset: offset) }
     }
 
     func endCropDrag() { cropDragStart = nil }
+
+    // MARK: - Keyframes
+
+    /// Pins the current framing at the playhead. The first one turns a fixed frame into a pan.
+    func addKeyframe() {
+        guard segments.indices.contains(currentIndex) else { return }
+        let i = currentIndex
+        let offset = segments[i].offset(at: currentTime, source: displaySize)
+        if !segments[i].panIsManual {
+            segments[i].pan = []
+            segments[i].panIsManual = true
+        }
+        segments[i].offset = offset
+        setKey(on: i, at: currentTime, offset: offset)
+        status = "Keyframe at \(String(format: "%.1fs", currentTime))"
+    }
+
+    func removeKeyframe(clip: Int, at time: Double) {
+        guard segments.indices.contains(clip) else { return }
+        segments[clip].pan.removeAll { abs($0.time - time) < 0.001 }
+        if segments[clip].pan.isEmpty { segments[clip].panIsManual = false }
+    }
+
+    func clearPan() {
+        guard segments.indices.contains(currentIndex) else { return }
+        segments[currentIndex].offset = segments[currentIndex].offset(at: currentTime,
+                                                                      source: displaySize)
+        segments[currentIndex].pan = []
+        segments[currentIndex].panIsManual = false
+        status = ""
+    }
+
+    private func setKey(on clip: Int, at time: Double, offset: CGPoint) {
+        let subject = CropMath.subject(centeredBy: offset, source: displaySize,
+                                       zoom: segments[clip].zoom)
+        let point = TrackPoint(time: time, subject: subject)
+        // Within a frame or so of an existing key counts as the same key.
+        if let existing = segments[clip].pan.firstIndex(where: { abs($0.time - time) < 0.05 }) {
+            segments[clip].pan[existing] = point
+        } else {
+            let at = segments[clip].pan.firstIndex { $0.time > time } ?? segments[clip].pan.count
+            segments[clip].pan.insert(point, at: at)
+        }
+    }
 
     func setZoom(_ zoom: CGFloat) {
         guard segments.indices.contains(currentIndex) else { return }
@@ -247,7 +301,8 @@ final class EditorModel: ObservableObject {
         guard segments.indices.contains(currentIndex) else { return }
         segments[currentIndex].offset = CGPoint(x: 0.5, y: 0.5)
         segments[currentIndex].zoom = 1
-        segments[currentIndex].track = []
+        segments[currentIndex].pan = []
+        segments[currentIndex].panIsManual = false
     }
 
     // MARK: - Tracking
@@ -268,7 +323,8 @@ final class EditorModel: ObservableObject {
                 }
                 // The clip may have been re-cut while this ran.
                 if segments.indices.contains(index), segments[index].id == clip.id {
-                    segments[index].track = points
+                    segments[index].pan = points
+                    segments[index].panIsManual = false
                 }
                 status = "Clip \(index + 1) now follows the subject"
             } catch {
@@ -276,12 +332,6 @@ final class EditorModel: ObservableObject {
             }
             isTracking = false
         }
-    }
-
-    func clearTrack() {
-        guard segments.indices.contains(currentIndex) else { return }
-        segments[currentIndex].track = []
-        status = ""
     }
 
     func applyFramingToAll() {
@@ -326,7 +376,7 @@ final class EditorModel: ObservableObject {
                                         end: CMTime(seconds: clip.end, preferredTimescale: 600))
                 do {
                     try await Exporter.export(source: url, range: range, offset: clip.offset,
-                                              zoom: clip.zoom, track: clip.track, to: output)
+                                              zoom: clip.zoom, pan: clip.pan, to: output)
                 } catch {
                     failed += 1
                     status = "Clip \(i + 1): \(error.localizedDescription)"

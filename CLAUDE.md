@@ -35,12 +35,23 @@ Output is always 1080x1920, even when the crop is smaller than that and it means
 every story platform re-encodes to that spec anyway, and a clean local upscale beats theirs.
 Change `CropMath.storySize` if that call turns out wrong.
 
-## Tracking
+## Panning: tracked or keyframed
+
+`Segment.pan` is a list of `TrackPoint`s, and `panIsManual` says who put them there. Automatic
+tracking and hand-set keyframes produce the same shape, so playback and export don't branch on
+which made it — only the UI does.
 
 `Tracker` samples at 8 Hz and asks Vision for a face, then a person, then the most salient object,
 so footage with nobody in it still follows something. A `TrackPoint` stores **where the subject
 was**, not a crop offset — the offset depends on zoom and the subject's position doesn't, so
-storing offsets would silently decentre a tracked clip the moment its zoom changed.
+storing offsets would silently decentre a panned clip the moment its zoom changed. Keyframes set
+by dragging go through `CropMath.subject(centeredBy:)`, the exact inverse of
+`CropMath.offset(centering:)`; if that round trip ever stops being exact, hand-set keyframes
+drift away from where they were put.
+
+Dragging the frame on a **tracked** clip throws the track away and takes manual control. Dragging
+on a **keyframed** clip creates or updates a keyframe at the playhead, the way an editor's
+auto-keyframe behaves — it must not wipe the other keys, or you could never set the second one.
 
 Detections jitter frame to frame, which reads as a seasick pan. `smooth` applies a deadzone that
 drops movement too small to be real, then a forward and a backward pass, the second of which

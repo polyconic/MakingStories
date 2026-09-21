@@ -27,7 +27,7 @@ enum Exporter {
 
     /// Renders `range` of `source` cropped to a story frame positioned by `offset`.
     static func export(source: URL, range: CMTimeRange, offset: CGPoint, zoom: CGFloat = 1,
-                       track: [TrackPoint] = [], to output: URL) async throws {
+                       pan: [TrackPoint] = [], to output: URL) async throws {
         let asset = AVURLAsset(url: source)
         guard let videoTrack = try await asset.loadTracks(withMediaType: .video).first else {
             throw StoryError("No video track in that file.")
@@ -58,10 +58,11 @@ enum Exporter {
         }
 
         let layer = AVMutableVideoCompositionLayerInstruction(assetTrack: videoTrack)
-        if track.count >= 2 {
-            // Ramps interpolate the pan between detections; times are in the source timeline.
-            layer.setTransform(matrix(for: panOffset(track[0])), at: .zero)
-            for (a, b) in zip(track, track.dropFirst()) {
+        if let first = pan.first {
+            // Ramps interpolate between points; times are in the source timeline. A lone point
+            // is a fixed frame at that position, which is what one keyframe means.
+            layer.setTransform(matrix(for: panOffset(first)), at: .zero)
+            for (a, b) in zip(pan, pan.dropFirst()) {
                 layer.setTransformRamp(
                     fromStart: matrix(for: panOffset(a)), toEnd: matrix(for: panOffset(b)),
                     timeRange: CMTimeRange(start: CMTime(seconds: a.time, preferredTimescale: 600),
