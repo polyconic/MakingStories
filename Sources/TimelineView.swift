@@ -42,6 +42,7 @@ struct TimelineView: View {
                             // Named space: a gesture on the handle reports location in the handle's own bounds.
                             DragGesture(minimumDistance: 0, coordinateSpace: .named("timeline"))
                                 .onChanged { model.moveMarker(after: i, to: $0.location.x / width * span) }
+                                .onEnded { _ in model.endMarkerDrag() }
                         )
                         .onTapGesture(count: 2) { model.removeMarker(after: i) }
                         .help("Drag to move this cut, double-click to remove it")

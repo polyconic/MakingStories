@@ -58,6 +58,30 @@ final class EditorModel: ObservableObject {
     private var timeObserver: Any?
     private var cropDragStart: CGPoint?
     private var pinchStartZoom: CGFloat?
+    private var draggingMarker: Int?
+
+    // MARK: - Undo
+
+    /// The window's manager, so ⌘Z comes off the standard Edit menu and a focused text field
+    /// still gets its own undo through the responder chain.
+    private var undoManager: UndoManager? {
+        NSApp.keyWindow?.undoManager ?? NSApp.mainWindow?.undoManager
+    }
+
+    /// Records the state before a change. Registering from inside an undo is what makes redo work.
+    private func snapshot(_ label: String) {
+        guard let manager = undoManager else { return }
+        let before = segments
+        manager.registerUndo(withTarget: self) { model in
+            MainActor.assumeIsolated {
+                model.snapshot(label)
+                model.segments = before
+                // The old status describes a change that no longer stands.
+                model.status = ""
+            }
+        }
+        manager.setActionName(label)
+    }
 
     var currentIndex: Int {
         segments.firstIndex { $0.start <= currentTime && currentTime < $0.end }
@@ -96,6 +120,8 @@ final class EditorModel: ObservableObject {
                 self.status = ""
                 splitEvery(30)
                 observe(player)
+                // A new video is a fresh start; there's nothing sensible to undo back into.
+                undoManager?.removeAllActions()
             } catch {
                 status = error.localizedDescription
             }
@@ -151,6 +177,7 @@ final class EditorModel: ObservableObject {
 
     func splitEvery(_ interval: Double) {
         guard duration > 0 else { return }
+        snapshot("Split Every \(Int(interval))s")
         var bounds = Array(stride(from: 0, to: duration, by: interval))
         bounds.append(duration)
         // A stub of a final clip is tidier merged into the one before it.
@@ -163,6 +190,7 @@ final class EditorModel: ObservableObject {
     func addMarker(at time: Double) {
         guard let i = segments.firstIndex(where: { $0.start < time && time < $0.end }) else { return }
         guard time - segments[i].start >= minClip, segments[i].end - time >= minClip else { return }
+        snapshot("Add Cut")
         let tail = Segment(start: time, end: segments[i].end, offset: segments[i].offset,
                            zoom: segments[i].zoom, included: segments[i].included)
         segments[i].end = time
@@ -172,19 +200,28 @@ final class EditorModel: ObservableObject {
     /// Removes the boundary between segment `i` and `i + 1`, merging them.
     func removeMarker(after i: Int) {
         guard segments.indices.contains(i), segments.indices.contains(i + 1) else { return }
+        snapshot("Remove Cut")
         segments[i].end = segments[i + 1].end
         segments.remove(at: i + 1)
     }
 
     func moveMarker(after i: Int, to time: Double) {
         guard segments.indices.contains(i), segments.indices.contains(i + 1) else { return }
+        // One undo step per drag, not per mouse-move.
+        if draggingMarker != i {
+            snapshot("Move Cut")
+            draggingMarker = i
+        }
         let t = min(max(time, segments[i].start + minClip), segments[i + 1].end - minClip)
         segments[i].end = t
         segments[i + 1].start = t
     }
 
+    func endMarkerDrag() { draggingMarker = nil }
+
     func clearMarkers() {
         guard duration > 0 else { return }
+        snapshot("Merge Into One Clip")
         let offset = segments.first?.offset ?? CGPoint(x: 0.5, y: 0.5)
         segments = [Segment(start: 0, end: duration, offset: offset)]
     }
@@ -195,14 +232,17 @@ final class EditorModel: ObservableObject {
 
     func toggleIncluded(_ i: Int) {
         guard segments.indices.contains(i) else { return }
+        snapshot(segments[i].included ? "Skip Clip" : "Include Clip")
         segments[i].included.toggle()
     }
 
     func includeAll() {
+        snapshot("Include All Clips")
         for i in segments.indices { segments[i].included = true }
     }
 
     func includeOnlyCurrent() {
+        snapshot("Export Only This Clip")
         let current = currentIndex
         for i in segments.indices { segments[i].included = (i == current) }
     }
@@ -215,6 +255,7 @@ final class EditorModel: ObservableObject {
         let i = currentIndex
 
         if cropDragStart == nil {
+            snapshot("Reframe")
             // Pick up from whatever is on screen, then decide what the drag means.
             segments[i].offset = segments[i].offset(at: currentTime, source: displaySize)
             // An automatic pan is replaced by the hand on the frame; hand-set keys are kept
@@ -240,6 +281,7 @@ final class EditorModel: ObservableObject {
     func addKeyframe() {
         guard segments.indices.contains(currentIndex) else { return }
         let i = currentIndex
+        snapshot("Add Keyframe")
         let offset = segments[i].offset(at: currentTime, source: displaySize)
         if !segments[i].panIsManual {
             segments[i].pan = []
@@ -252,12 +294,14 @@ final class EditorModel: ObservableObject {
 
     func removeKeyframe(clip: Int, at time: Double) {
         guard segments.indices.contains(clip) else { return }
+        snapshot("Remove Keyframe")
         segments[clip].pan.removeAll { abs($0.time - time) < 0.001 }
         if segments[clip].pan.isEmpty { segments[clip].panIsManual = false }
     }
 
     func clearPan() {
         guard segments.indices.contains(currentIndex) else { return }
+        snapshot("Clear Pan")
         segments[currentIndex].offset = segments[currentIndex].offset(at: currentTime,
                                                                       source: displaySize)
         segments[currentIndex].pan = []
@@ -284,12 +328,16 @@ final class EditorModel: ObservableObject {
                                           CropMath.zoomRange.upperBound)
     }
 
+    func beginZoomEdit() { snapshot("Zoom") }
+
     func nudgeZoom(_ factor: CGFloat) {
+        snapshot("Zoom")
         setZoom(currentSegment.zoom * factor)
     }
 
     /// Trackpad pinch: magnification is cumulative from the gesture's start, not per-event.
     func pinchZoom(_ magnification: CGFloat) {
+        if pinchStartZoom == nil { snapshot("Zoom") }
         let start = pinchStartZoom ?? currentSegment.zoom
         pinchStartZoom = start
         setZoom(start * magnification)
@@ -299,6 +347,7 @@ final class EditorModel: ObservableObject {
 
     func resetFraming() {
         guard segments.indices.contains(currentIndex) else { return }
+        snapshot("Reset Framing")
         segments[currentIndex].offset = CGPoint(x: 0.5, y: 0.5)
         segments[currentIndex].zoom = 1
         segments[currentIndex].pan = []
@@ -323,6 +372,7 @@ final class EditorModel: ObservableObject {
                 }
                 // The clip may have been re-cut while this ran.
                 if segments.indices.contains(index), segments[index].id == clip.id {
+                    snapshot("Track Subject")
                     segments[index].pan = points
                     segments[index].panIsManual = false
                 }
@@ -335,6 +385,7 @@ final class EditorModel: ObservableObject {
     }
 
     func applyFramingToAll() {
+        snapshot("Apply Framing To All")
         let (offset, zoom) = (currentSegment.offset, currentSegment.zoom)
         for i in segments.indices {
             segments[i].offset = offset

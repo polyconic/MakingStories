@@ -169,7 +169,11 @@ struct ZoomControl: View {
             .keyboardShortcut("-", modifiers: .command)
             .help("Zoom out (⌘−)")
 
-            Slider(value: slider, in: 0...1).frame(width: 110)
+            Slider(value: slider, in: 0...1) { editing in
+                // One undo step for the whole drag, taken before the first value lands.
+                if editing { model.beginZoomEdit() }
+            }
+            .frame(width: 110)
 
             Button { model.nudgeZoom(1.15) } label: {
                 Image(systemName: "plus.magnifyingglass")
