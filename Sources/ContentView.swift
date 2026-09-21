@@ -95,8 +95,18 @@ struct TransportBar: View {
 
             ZoomControl()
 
+            if model.isTracking {
+                ProgressView(value: model.trackProgress).frame(width: 70)
+            } else if model.currentSegment.isTracked {
+                Button("Untrack") { model.clearTrack() }
+                    .help("Stop following the subject and go back to a fixed frame")
+            } else {
+                Button("Track") { model.trackCurrent() }
+                    .help("Follow the subject through this clip")
+            }
+
             Button("Reset") { model.resetFraming() }
-                .help("Center this clip and set zoom back to 100%")
+                .help("Center this clip, set zoom back to 100%, and drop any tracking")
             Button("Apply to All") { model.applyFramingToAll() }
                 .help("Give every clip this clip's framing and zoom")
         }

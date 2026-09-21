@@ -9,8 +9,25 @@ struct Segment: Identifiable, Equatable {
     var offset = CGPoint(x: 0.5, y: 0.5)
     var zoom: CGFloat = 1
     var included = true
+    var track: [TrackPoint] = []
 
     var duration: Double { end - start }
+    var isTracked: Bool { track.count >= 2 }
+
+    /// Where the frame sits at a given moment — the fixed offset, or the tracked pan.
+    func offset(at time: Double, source: CGSize) -> CGPoint {
+        guard isTracked else { return offset }
+        return CropMath.offset(centering: subject(at: time), source: source, zoom: zoom)
+    }
+
+    private func subject(at time: Double) -> CGPoint {
+        if time <= track[0].time { return track[0].subject }
+        guard let i = track.firstIndex(where: { $0.time > time }) else { return track[track.count - 1].subject }
+        let (a, b) = (track[i - 1], track[i])
+        let t = (time - a.time) / max(b.time - a.time, 0.0001)
+        return CGPoint(x: a.subject.x + (b.subject.x - a.subject.x) * t,
+                       y: a.subject.y + (b.subject.y - a.subject.y) * t)
+    }
 }
 
 @MainActor
@@ -27,6 +44,8 @@ final class EditorModel: ObservableObject {
     @Published var dropTargeted = false
     @Published var isExporting = false
     @Published var exportProgress: Double = 0
+    @Published var isTracking = false
+    @Published var trackProgress: Double = 0
     @Published var status = ""
 
     /// Segment boundaries can't be dragged closer together than this.
@@ -188,6 +207,12 @@ final class EditorModel: ObservableObject {
     /// Drag translation is in view points; slack is the room the crop has to move there.
     func dragCrop(by translation: CGSize, slack: CGSize) {
         guard segments.indices.contains(currentIndex) else { return }
+        // Grabbing the frame takes it back off the tracker, starting from wherever the pan is now.
+        if segments[currentIndex].isTracked {
+            segments[currentIndex].offset = segments[currentIndex].offset(at: currentTime,
+                                                                          source: displaySize)
+            segments[currentIndex].track = []
+        }
         let start = cropDragStart ?? segments[currentIndex].offset
         cropDragStart = start
         var offset = start
@@ -222,6 +247,41 @@ final class EditorModel: ObservableObject {
         guard segments.indices.contains(currentIndex) else { return }
         segments[currentIndex].offset = CGPoint(x: 0.5, y: 0.5)
         segments[currentIndex].zoom = 1
+        segments[currentIndex].track = []
+    }
+
+    // MARK: - Tracking
+
+    func trackCurrent() {
+        guard let url, !isTracking, segments.indices.contains(currentIndex) else { return }
+        let index = currentIndex
+        let clip = segments[index]
+        isTracking = true
+        trackProgress = 0
+        status = "Following the subject…"
+        Task {
+            do {
+                let range = CMTimeRange(start: CMTime(seconds: clip.start, preferredTimescale: 600),
+                                        end: CMTime(seconds: clip.end, preferredTimescale: 600))
+                let points = try await Tracker.track(source: url, range: range) { p in
+                    Task { @MainActor in self.trackProgress = p }
+                }
+                // The clip may have been re-cut while this ran.
+                if segments.indices.contains(index), segments[index].id == clip.id {
+                    segments[index].track = points
+                }
+                status = "Clip \(index + 1) now follows the subject"
+            } catch {
+                status = error.localizedDescription
+            }
+            isTracking = false
+        }
+    }
+
+    func clearTrack() {
+        guard segments.indices.contains(currentIndex) else { return }
+        segments[currentIndex].track = []
+        status = ""
     }
 
     func applyFramingToAll() {
@@ -266,7 +326,7 @@ final class EditorModel: ObservableObject {
                                         end: CMTime(seconds: clip.end, preferredTimescale: 600))
                 do {
                     try await Exporter.export(source: url, range: range, offset: clip.offset,
-                                              zoom: clip.zoom, to: output)
+                                              zoom: clip.zoom, track: clip.track, to: output)
                 } catch {
                     failed += 1
                     status = "Clip \(i + 1): \(error.localizedDescription)"

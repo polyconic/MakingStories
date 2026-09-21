@@ -27,30 +27,49 @@ enum Exporter {
 
     /// Renders `range` of `source` cropped to a story frame positioned by `offset`.
     static func export(source: URL, range: CMTimeRange, offset: CGPoint, zoom: CGFloat = 1,
-                       to output: URL) async throws {
+                       track: [TrackPoint] = [], to output: URL) async throws {
         let asset = AVURLAsset(url: source)
-        guard let track = try await asset.loadTracks(withMediaType: .video).first else {
+        guard let videoTrack = try await asset.loadTracks(withMediaType: .video).first else {
             throw StoryError("No video track in that file.")
         }
-        let (natural, transform, minFrame) = try await track.load(.naturalSize, .preferredTransform,
-                                                                  .minFrameDuration)
+        let (natural, transform, minFrame) = try await videoTrack.load(.naturalSize, .preferredTransform,
+                                                                       .minFrameDuration)
         let duration = try await asset.load(.duration)
 
         let oriented = CGRect(origin: .zero, size: natural).applying(transform)
         let display = CGSize(width: abs(oriented.width), height: abs(oriented.height))
-        let crop = CropMath.cropRect(source: display, offset: offset, zoom: zoom)
         let render = CropMath.storySize
-        guard crop.width > 0 else { throw StoryError("Can't work out a crop for that video.") }
+        guard CropMath.cropRect(source: display, offset: offset, zoom: zoom).width > 0 else {
+            throw StoryError("Can't work out a crop for that video.")
+        }
 
         // Oriented pixels to the render canvas: normalize, shift the crop to the origin, fill.
-        let t = transform
-            .concatenating(CGAffineTransform(translationX: -oriented.minX - crop.minX,
-                                             y: -oriented.minY - crop.minY))
-            .concatenating(CGAffineTransform(scaleX: render.width / crop.width,
-                                             y: render.height / crop.height))
+        func matrix(for offset: CGPoint) -> CGAffineTransform {
+            let crop = CropMath.cropRect(source: display, offset: offset, zoom: zoom)
+            return transform
+                .concatenating(CGAffineTransform(translationX: -oriented.minX - crop.minX,
+                                                 y: -oriented.minY - crop.minY))
+                .concatenating(CGAffineTransform(scaleX: render.width / crop.width,
+                                                 y: render.height / crop.height))
+        }
 
-        let layer = AVMutableVideoCompositionLayerInstruction(assetTrack: track)
-        layer.setTransform(t, at: .zero)
+        func panOffset(_ point: TrackPoint) -> CGPoint {
+            CropMath.offset(centering: point.subject, source: display, zoom: zoom)
+        }
+
+        let layer = AVMutableVideoCompositionLayerInstruction(assetTrack: videoTrack)
+        if track.count >= 2 {
+            // Ramps interpolate the pan between detections; times are in the source timeline.
+            layer.setTransform(matrix(for: panOffset(track[0])), at: .zero)
+            for (a, b) in zip(track, track.dropFirst()) {
+                layer.setTransformRamp(
+                    fromStart: matrix(for: panOffset(a)), toEnd: matrix(for: panOffset(b)),
+                    timeRange: CMTimeRange(start: CMTime(seconds: a.time, preferredTimescale: 600),
+                                           end: CMTime(seconds: b.time, preferredTimescale: 600)))
+            }
+        } else {
+            layer.setTransform(matrix(for: offset), at: .zero)
+        }
         let instruction = AVMutableVideoCompositionInstruction()
         instruction.timeRange = CMTimeRange(start: .zero, duration: duration)
         instruction.backgroundColor = CGColor(gray: 0, alpha: 1)

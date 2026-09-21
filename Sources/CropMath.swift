@@ -30,6 +30,20 @@ enum CropMath {
                       width: size.width, height: size.height)
     }
 
+    /// The offset that puts `subject` (normalized, top-left origin) in the middle of the crop,
+    /// as far as the slack allows. Derived at use time, so a tracked clip survives a zoom change.
+    static func offset(centering subject: CGPoint, source: CGSize,
+                       aspect: CGFloat = storyAspect, zoom: CGFloat = 1) -> CGPoint {
+        let crop = cropRect(source: source, aspect: aspect, offset: CGPoint(x: 0.5, y: 0.5), zoom: zoom)
+        let slack = CGSize(width: source.width - crop.width, height: source.height - crop.height)
+        let point = CGPoint(x: subject.x * source.width, y: subject.y * source.height)
+        return CGPoint(
+            x: slack.width > 0 ? clamp((point.x - crop.width / 2) / slack.width) : 0.5,
+            y: slack.height > 0 ? clamp((point.y - crop.height / 2) / slack.height) : 0.5)
+    }
+
+    static func clamp(_ v: CGFloat) -> CGFloat { min(max(v, 0), 1) }
+
     /// Where an aspect-fit video sits inside its container.
     static func videoRect(container: CGSize, content: CGSize) -> CGRect {
         guard content.width > 0, content.height > 0, container.width > 0, container.height > 0 else {

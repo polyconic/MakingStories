@@ -19,7 +19,7 @@ echo "==> Compiling (arm64, macOS $MIN_MACOS+)"
 swiftc -O -whole-module-optimization -parse-as-library -swift-version 5 \
     -target "arm64-apple-macosx$MIN_MACOS" \
     -framework AppKit -framework SwiftUI -framework AVFoundation \
-    -framework CoreGraphics -framework CoreMedia -framework UniformTypeIdentifiers \
+    -framework CoreGraphics -framework CoreMedia -framework Vision -framework UniformTypeIdentifiers \
     "$ROOT"/Sources/*.swift \
     -o "$APP/Contents/MacOS/$APP_NAME"
 
