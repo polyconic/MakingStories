@@ -35,10 +35,26 @@ Output is always 1080x1920, even when the crop is smaller than that and it means
 every story platform re-encodes to that spec anyway, and a clean local upscale beats theirs.
 Change `CropMath.storySize` if that call turns out wrong.
 
+## Tracking
+
+`Tracker` samples at 8 Hz and asks Vision for a face, then a person, then the most salient object,
+so footage with nobody in it still follows something. A `TrackPoint` stores **where the subject
+was**, not a crop offset — the offset depends on zoom and the subject's position doesn't, so
+storing offsets would silently decentre a tracked clip the moment its zoom changed.
+
+Detections jitter frame to frame, which reads as a seasick pan. `smooth` applies a deadzone that
+drops movement too small to be real, then a forward and a backward pass, the second of which
+cancels the lag a causal filter alone would leave behind the subject.
+
+Export ramps the transform between detections. A tracked clip with nothing to pan into — a 9:16
+source at 100% zoom has no slack — correctly does nothing; zoom in first.
+
 Headless, which is how the crop math gets tested:
 
 ```
 MakingStories.app/Contents/MacOS/MakingStories --export <in> <out> <startSec> <endSec> <offsetX> <offsetY> [zoom]
+MakingStories.app/Contents/MacOS/MakingStories --track-export <in> <out> <startSec> <endSec>
+MakingStories.app/Contents/MacOS/MakingStories --pan-export <in> <out> <startSec> <endSec> <x0> <x1>
 ```
 
 Exports land in `<name> Story/` on the Desktop, as `<name>_01.mp4`, where the name is the editable
