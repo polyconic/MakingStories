@@ -335,12 +335,20 @@ final class EditorModel: ObservableObject {
         setZoom(currentSegment.zoom * factor)
     }
 
+    func resetZoom() {
+        guard segments.indices.contains(currentIndex) else { return }
+        snapshot("Zoom to 100%")
+        segments[currentIndex].zoom = 1
+    }
+
     /// Trackpad pinch: magnification is cumulative from the gesture's start, not per-event.
+    /// Inverted on purpose — what you're sizing on screen is the crop box, so spreading your
+    /// fingers should open the frame out, not punch it in.
     func pinchZoom(_ magnification: CGFloat) {
         if pinchStartZoom == nil { snapshot("Zoom") }
         let start = pinchStartZoom ?? currentSegment.zoom
         pinchStartZoom = start
-        setZoom(start * magnification)
+        setZoom(start / max(magnification, 0.1))
     }
 
     func endPinch() { pinchStartZoom = nil }

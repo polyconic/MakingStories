@@ -181,10 +181,11 @@ struct ZoomControl: View {
             .keyboardShortcut("=", modifiers: .command)
             .help("Zoom in (⌘+), or pinch on the video")
 
-            Text("\(Int((model.currentSegment.zoom * 100).rounded()))%")
+            Button("\(Int((model.currentSegment.zoom * 100).rounded()))%") { model.resetZoom() }
                 .font(.caption.monospacedDigit())
-                .foregroundStyle(.secondary)
-                .frame(width: 40, alignment: .trailing)
+                .frame(width: 52)
+                .disabled(model.currentSegment.zoom == 1)
+                .help("Back to 100%")
         }
     }
 }
