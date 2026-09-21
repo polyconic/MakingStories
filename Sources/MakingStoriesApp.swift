@@ -25,8 +25,21 @@ struct MakingStoriesApp: App {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let model = EditorModel()
+    private var scrollMonitor: Any?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Read the event into plain values first — NSEvent isn't Sendable, so handing the event
+        // itself across the isolation boundary is an error under Swift 6.
+        scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+            let scroll = ScrollInput(deltaY: event.scrollingDeltaY,
+                                     location: event.locationInWindow,
+                                     windowNumber: event.windowNumber,
+                                     precise: event.hasPreciseScrollingDeltas,
+                                     inverted: event.isDirectionInvertedFromDevice,
+                                     began: event.phase == .began)
+            let handled = MainActor.assumeIsolated { self?.model.scrollZoom(scroll) ?? false }
+            return handled ? nil : event
+        }
         let args = CommandLine.arguments
         if let i = args.firstIndex(of: "--track-export"), args.count > i + 4 {
             trackHeadless(source: URL(fileURLWithPath: args[i + 1]),

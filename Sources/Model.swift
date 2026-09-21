@@ -35,6 +35,16 @@ struct Segment: Identifiable, Equatable {
     }
 }
 
+/// A scroll event reduced to values that can cross an isolation boundary.
+struct ScrollInput {
+    var deltaY: CGFloat
+    var location: NSPoint
+    var windowNumber: Int
+    var precise: Bool
+    var inverted: Bool
+    var began: Bool
+}
+
 @MainActor
 final class EditorModel: ObservableObject {
     @Published var url: URL?
@@ -57,8 +67,11 @@ final class EditorModel: ObservableObject {
     private let minClip: Double = 0.5
     private var timeObserver: Any?
     private var cropDragStart: CGPoint?
-    private var pinchStartZoom: CGFloat?
     private var draggingMarker: Int?
+    private var lastScroll = Date.distantPast
+
+    /// The preview's AppKit view, so scroll events can be gated to the video area.
+    weak var previewView: NSView?
 
     // MARK: - Undo
 
@@ -341,17 +354,29 @@ final class EditorModel: ObservableObject {
         segments[currentIndex].zoom = 1
     }
 
-    /// Trackpad pinch: magnification is cumulative from the gesture's start, not per-event.
-    /// Inverted on purpose — what you're sizing on screen is the crop box, so spreading your
-    /// fingers should open the frame out, not punch it in.
-    func pinchZoom(_ magnification: CGFloat) {
-        if pinchStartZoom == nil { snapshot("Zoom") }
-        let start = pinchStartZoom ?? currentSegment.zoom
-        pinchStartZoom = start
-        setZoom(start / max(magnification, 0.1))
-    }
+    /// Scroll over the video to zoom. SwiftUI has no scroll-wheel hook, so this is fed from an
+    /// AppKit event monitor. Returns false when the scroll wasn't over the preview and should
+    /// pass through untouched.
+    func scrollZoom(_ scroll: ScrollInput) -> Bool {
+        guard let view = previewView, let window = view.window,
+              window.windowNumber == scroll.windowNumber,
+              view.bounds.contains(view.convert(scroll.location, from: nil))
+        else { return false }
 
-    func endPinch() { pinchStartZoom = nil }
+        // Natural scrolling already flips the sign; undo that so the physical motion decides.
+        let delta = scroll.inverted ? -scroll.deltaY : scroll.deltaY
+        guard delta != 0 else { return true }
+
+        let now = Date()
+        // One undo step per burst — a scroll fires continuously.
+        if scroll.began || now.timeIntervalSince(lastScroll) > 0.6 { snapshot("Zoom") }
+        lastScroll = now
+
+        // A trackpad sends many small precise deltas; a wheel sends a few large notches.
+        let rate: CGFloat = scroll.precise ? 0.004 : 0.08
+        setZoom(currentSegment.zoom * exp(delta * rate))
+        return true
+    }
 
     func resetFraming() {
         guard segments.indices.contains(currentIndex) else { return }

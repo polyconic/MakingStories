@@ -26,10 +26,12 @@ final class PlayerNSView: NSView {
 
 struct PlayerView: NSViewRepresentable {
     let player: AVPlayer?
+    var onMake: ((NSView) -> Void)?
 
     func makeNSView(context: Context) -> PlayerNSView {
         let view = PlayerNSView()
         view.playerLayer.player = player
+        onMake?(view)
         return view
     }
 
@@ -55,7 +57,7 @@ struct PreviewView: View {
             let slack = CGSize(width: video.width - crop.width, height: video.height - crop.height)
 
             ZStack {
-                PlayerView(player: model.player)
+                PlayerView(player: model.player) { model.previewView = $0 }
                 Path { path in
                     path.addRect(video)
                     path.addRect(crop)
@@ -72,11 +74,6 @@ struct PreviewView: View {
                 DragGesture(minimumDistance: 0)
                     .onChanged { model.dragCrop(by: $0.translation, slack: slack) }
                     .onEnded { _ in model.endCropDrag() }
-            )
-            .simultaneousGesture(
-                MagnifyGesture()
-                    .onChanged { model.pinchZoom($0.magnification) }
-                    .onEnded { _ in model.endPinch() }
             )
         }
         .background(Color.black)

@@ -179,7 +179,7 @@ struct ZoomControl: View {
                 Image(systemName: "plus.magnifyingglass")
             }
             .keyboardShortcut("=", modifiers: .command)
-            .help("Zoom in (⌘+), or pinch on the video")
+            .help("Zoom in (⌘+), or scroll on the video")
 
             Button("\(Int((model.currentSegment.zoom * 100).rounded()))%") { model.resetZoom() }
                 .font(.caption.monospacedDigit())
