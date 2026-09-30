@@ -1,5 +1,6 @@
 import AVFoundation
 import Foundation
+import QuartzCore
 
 struct StoryError: LocalizedError {
     let message: String
@@ -25,9 +26,11 @@ enum Exporter {
                          duration: duration.seconds)
     }
 
-    /// Renders `range` of `source` cropped to a story frame positioned by `offset`.
+    /// Renders `range` of `source` cropped to a story frame positioned by `offset`. The footage
+    /// fills `layout.band`; `overlay` (bars and captions) is burned in on top when there is one.
     static func export(source: URL, range: CMTimeRange, offset: CGPoint, zoom: CGFloat = 1,
-                       pan: [TrackPoint] = [], to output: URL) async throws {
+                       pan: [TrackPoint] = [], layout: StoryLayout = StoryLayout(),
+                       overlay: CGImage? = nil, to output: URL) async throws {
         let asset = AVURLAsset(url: source)
         guard let videoTrack = try await asset.loadTracks(withMediaType: .video).first else {
             throw StoryError("No video track in that file.")
@@ -39,22 +42,24 @@ enum Exporter {
         let oriented = CGRect(origin: .zero, size: natural).applying(transform)
         let display = CGSize(width: abs(oriented.width), height: abs(oriented.height))
         let render = CropMath.storySize
-        guard CropMath.cropRect(source: display, offset: offset, zoom: zoom).width > 0 else {
-            throw StoryError("Can't work out a crop for that video.")
-        }
+        let band = layout.band
+        guard CropMath.cropRect(source: display, aspect: layout.aspect, offset: offset, zoom: zoom).width > 0
+        else { throw StoryError("Can't work out a crop for that video.") }
 
-        // Oriented pixels to the render canvas: normalize, shift the crop to the origin, fill.
+        // Oriented pixels to the render canvas: normalize, shift the crop to the origin, scale it
+        // to the band, then drop it below the top bar.
         func matrix(for offset: CGPoint) -> CGAffineTransform {
-            let crop = CropMath.cropRect(source: display, offset: offset, zoom: zoom)
+            let crop = CropMath.cropRect(source: display, aspect: layout.aspect, offset: offset, zoom: zoom)
             return transform
                 .concatenating(CGAffineTransform(translationX: -oriented.minX - crop.minX,
                                                  y: -oriented.minY - crop.minY))
-                .concatenating(CGAffineTransform(scaleX: render.width / crop.width,
-                                                 y: render.height / crop.height))
+                .concatenating(CGAffineTransform(scaleX: band.width / crop.width,
+                                                 y: band.height / crop.height))
+                .concatenating(CGAffineTransform(translationX: band.minX, y: band.minY))
         }
 
         func panOffset(_ point: TrackPoint) -> CGPoint {
-            CropMath.offset(centering: point.subject, source: display, zoom: zoom)
+            CropMath.offset(centering: point.subject, source: display, aspect: layout.aspect, zoom: zoom)
         }
 
         let layer = AVMutableVideoCompositionLayerInstruction(assetTrack: videoTrack)
@@ -73,7 +78,8 @@ enum Exporter {
         }
         let instruction = AVMutableVideoCompositionInstruction()
         instruction.timeRange = CMTimeRange(start: .zero, duration: duration)
-        instruction.backgroundColor = CGColor(gray: 0, alpha: 1)
+        // Anywhere the footage doesn't reach — zoomed out past the source — reads as more bar.
+        instruction.backgroundColor = layout.barColor.cgColor
         instruction.layerInstructions = [layer]
 
         let videoComposition = AVMutableVideoComposition()
@@ -81,6 +87,20 @@ enum Exporter {
         videoComposition.frameDuration = minFrame.isValid && minFrame.seconds > 0
             ? minFrame : CMTime(value: 1, timescale: 30)
         videoComposition.instructions = [instruction]
+
+        if let overlay {
+            let frame = CGRect(origin: .zero, size: render)
+            let parent = CALayer()
+            let video = CALayer()
+            let captions = CALayer()
+            for l in [parent, video, captions] { l.frame = frame }
+            captions.contents = overlay
+            captions.contentsGravity = .resize
+            parent.addSublayer(video)
+            parent.addSublayer(captions)
+            videoComposition.animationTool = AVVideoCompositionCoreAnimationTool(
+                postProcessingAsVideoLayer: video, in: parent)
+        }
 
         guard let session = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetHighestQuality) else {
             throw StoryError("Can't create an export session.")

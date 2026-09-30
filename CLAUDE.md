@@ -37,13 +37,49 @@ Change `CropMath.storySize` if that call turns out wrong.
 
 ## Undo
 
-Every edit is a snapshot of `segments` registered with the **window's** `UndoManager`, not a
-private stack — that way ⌘Z comes off the standard Edit menu and a focused text field keeps its
-own undo through the responder chain. Registering an undo from inside an undo is what gives redo.
+Every edit is a snapshot of `segments` **and** `layout`, registered with the editor **window's**
+`UndoManager` so ⌘Z comes off the standard Edit menu. Registering an undo from inside an undo is
+what gives redo. The manager is found through `previewView?.window`, not `NSApp.keyWindow` —
+through the key window, an edit landing while the app is in the background (tracking finishing)
+went unrecorded, and a missing step is worse than none: undoing an earlier change then quietly
+reverts the unrecorded one too.
 
-Anything that mutates `segments` must call `snapshot(_:)` first. Continuous gestures snapshot once
-when they begin — `cropDragStart == nil`, `draggingMarker != i`, the slider's `onEditingChanged` —
-or a single drag would bury the stack under dozens of steps.
+Anything that mutates `segments` or `layout` must call `snapshot(_:)` first. Continuous gestures
+snapshot once when they begin — `cropDragStart == nil`, `draggingMarker != i`, a slider's
+`onEditingChanged` — or a single drag would bury the stack under dozens of steps. Typing and color
+wells use `burstSnapshot`: one step per burst of changes a second apart.
+
+**There must be exactly one undo stack for caption text.** SwiftUI's `TextField` keeps a *private*
+undo manager (measured: its did-undo notifications came from a different object than the
+window's). Two stacks unwind in focus order, not in the order things happened, and the field's
+undo echoes its restored text back through the binding *after* the undo finishes, where it was
+recorded as a new edit — ⌘Z ping-ponged the caption and never reached the change before it. The
+caption box is therefore `CaptionField`, an `NSTextView` with `allowsUndo = false`, so ⌘Z falls
+through to the window's manager and caption edits undo in sequence with everything else. Don't
+swap it back for a `TextField`. (The export-name field is still a `TextField`; its name isn't part
+of the snapshot, so its private undo harms nothing.)
+
+## Letterbox and captions
+
+`StoryLayout` is one per export — bars, bar and text colors, font and size for each line — and
+persists in UserDefaults. Caption *text* is per clip on `Segment`. The layout decodes field by
+field with defaults, because a synthesized decoder needs every key and adding a setting would
+otherwise silently discard the saved layout.
+
+The bars shrink the band the footage fills, and **`layout.aspect` is the crop's aspect**, not 9:16.
+Every `CropMath` call that frames footage must pass it — the source crop box, the story preview,
+drag slack, keyframe conversion and export. Pan stays correct across letterbox changes for the
+same reason it survives zoom: `TrackPoint` stores the subject, not an offset.
+
+`CaptionRenderer.overlay` draws bars and text onto a transparent 1080×1920 image. The story
+preview shows that exact image and the export burns in that exact image through
+`AVVideoCompositionCoreAnimationTool`, so the two can't disagree about wrapping or placement. With
+no bars and no text it returns nil and the export skips the animation tool entirely — the
+original verified path, untouched.
+
+Verified per-pixel against the color-banded test clip: band edges land within a few pixels of the
+bar heights at 1:1 and asymmetric bars; the square crop takes source x 280–1000 as predicted; top
+text lands in the *top* bar (the overlay isn't flipped) and is centered in its bar to within 4px.
 
 ## Panning: tracked or keyframed
 
@@ -54,7 +90,7 @@ which made it — only the UI does.
 `Tracker` samples at 8 Hz and asks Vision for a face, then a person, then the most salient object,
 so footage with nobody in it still follows something. A `TrackPoint` stores **where the subject
 was**, not a crop offset — the offset depends on zoom and the subject's position doesn't, so
-storing offsets would silently decentre a panned clip the moment its zoom changed. Keyframes set
+storing offsets would silently decenter a panned clip the moment its zoom changed. Keyframes set
 by dragging go through `CropMath.subject(centeredBy:)`, the exact inverse of
 `CropMath.offset(centering:)`; if that round trip ever stops being exact, hand-set keyframes
 drift away from where they were put.
@@ -76,6 +112,7 @@ Headless, which is how the crop math gets tested:
 MakingStories.app/Contents/MacOS/MakingStories --export <in> <out> <startSec> <endSec> <offsetX> <offsetY> [zoom]
 MakingStories.app/Contents/MacOS/MakingStories --track-export <in> <out> <startSec> <endSec>
 MakingStories.app/Contents/MacOS/MakingStories --pan-export <in> <out> <startSec> <endSec> <x0> <x1>
+MakingStories.app/Contents/MacOS/MakingStories --story-export <in> <out> <startSec> <endSec> <topBar> <bottomBar> [top] [bottom]
 ```
 
 Exports land in `<name> Story/` on the Desktop, as `<name>_01.mp4`, where the name is the editable

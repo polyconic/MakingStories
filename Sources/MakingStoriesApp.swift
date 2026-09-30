@@ -10,7 +10,7 @@ struct MakingStoriesApp: App {
         Window("MakingStories", id: "main") {
             ContentView()
                 .environmentObject(delegate.model)
-                .frame(minWidth: 860, minHeight: 620)
+                .frame(minWidth: 1180, minHeight: 740)
         }
         .windowResizability(.contentMinSize)
         .commands {
@@ -41,6 +41,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return handled ? nil : event
         }
         let args = CommandLine.arguments
+        if let i = args.firstIndex(of: "--story-export"), args.count > i + 6 {
+            // Letterbox and captions on the default style, centered, for checking the composite.
+            var layout = StoryLayout()
+            layout.topBar = CGFloat(Double(args[i + 5]) ?? 0)
+            layout.bottomBar = CGFloat(Double(args[i + 6]) ?? 0)
+            let top = args.count > i + 7 ? args[i + 7] : ""
+            let bottom = args.count > i + 8 ? args[i + 8] : ""
+            storyHeadless(source: URL(fileURLWithPath: args[i + 1]),
+                          output: URL(fileURLWithPath: args[i + 2]),
+                          start: Double(args[i + 3]) ?? 0, end: Double(args[i + 4]) ?? 0,
+                          layout: layout,
+                          overlay: CaptionRenderer.overlay(layout: layout, top: top, bottom: bottom))
+            return
+        }
         if let i = args.firstIndex(of: "--track-export"), args.count > i + 4 {
             trackHeadless(source: URL(fileURLWithPath: args[i + 1]),
                           output: URL(fileURLWithPath: args[i + 2]),
@@ -77,6 +91,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+
+    /// `MakingStories --story-export <in> <out> <start> <end> <topBar> <bottomBar> [top] [bottom]`
+    private func storyHeadless(source: URL, output: URL, start: Double, end: Double,
+                               layout: StoryLayout, overlay: CGImage?) {
+        Task {
+            do {
+                let range = CMTimeRange(start: CMTime(seconds: start, preferredTimescale: 600),
+                                        end: CMTime(seconds: end, preferredTimescale: 600))
+                try await Exporter.export(source: source, range: range, offset: CGPoint(x: 0.5, y: 0.5),
+                                          layout: layout, overlay: overlay, to: output)
+                print(output.path)
+            } catch {
+                print("failed: \(error.localizedDescription)")
+            }
+            NSApp.terminate(nil)
+        }
+    }
 
     private func panHeadless(source: URL, output: URL, start: Double, end: Double,
                              pan: [TrackPoint]) {

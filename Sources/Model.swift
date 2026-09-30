@@ -15,14 +15,18 @@ struct Segment: Identifiable, Equatable {
     var pan: [TrackPoint] = []
     var panIsManual = false
 
+    var topCaption = ""
+    var bottomCaption = ""
+
     var duration: Double { end - start }
     var hasPan: Bool { !pan.isEmpty }
     var isTracked: Bool { hasPan && !panIsManual }
 
-    /// Where the frame sits at a given moment — the fixed offset, or the pan.
-    func offset(at time: Double, source: CGSize) -> CGPoint {
+    /// Where the frame sits at a given moment — the fixed offset, or the pan. `aspect` is the
+    /// band the footage fills, which the letterbox decides.
+    func offset(at time: Double, source: CGSize, aspect: CGFloat) -> CGPoint {
         guard hasPan else { return offset }
-        return CropMath.offset(centering: subject(at: time), source: source, zoom: zoom)
+        return CropMath.offset(centering: subject(at: time), source: source, aspect: aspect, zoom: zoom)
     }
 
     private func subject(at time: Double) -> CGPoint {
@@ -62,6 +66,12 @@ final class EditorModel: ObservableObject {
     @Published var isTracking = false
     @Published var trackProgress: Double = 0
     @Published var status = ""
+    /// Kept between launches: the look of an artist's campaign shouldn't need rebuilding per video.
+    @Published var layout = StoryLayout.saved() {
+        didSet { if layout != oldValue { layout.save() } }
+    }
+
+    var aspect: CGFloat { layout.aspect }
 
     /// Segment boundaries can't be dragged closer together than this.
     private let minClip: Double = 0.5
@@ -69,32 +79,50 @@ final class EditorModel: ObservableObject {
     private var cropDragStart: CGPoint?
     private var draggingMarker: Int?
     private var lastScroll = Date.distantPast
+    private var lastBurst: (label: String, at: Date)?
+    private var overlayCache: (layout: StoryLayout, top: String, bottom: String, image: CGImage?)?
 
     /// The preview's AppKit view, so scroll events can be gated to the video area.
     weak var previewView: NSView?
 
     // MARK: - Undo
 
-    /// The window's manager, so ⌘Z comes off the standard Edit menu and a focused text field
-    /// still gets its own undo through the responder chain.
+    /// The editor window's manager, so ⌘Z comes off the standard Edit menu and a focused text
+    /// field still gets its own undo through the responder chain. Found through the preview's
+    /// window rather than the key window: an edit that lands while the app is in the background —
+    /// tracking finishing, say — would otherwise go unrecorded, and undoing an earlier change
+    /// would then quietly revert it too.
     private var undoManager: UndoManager? {
-        NSApp.keyWindow?.undoManager ?? NSApp.mainWindow?.undoManager
+        previewView?.window?.undoManager ?? NSApp.keyWindow?.undoManager ?? NSApp.mainWindow?.undoManager
     }
 
     /// Records the state before a change. Registering from inside an undo is what makes redo work.
     private func snapshot(_ label: String) {
         guard let manager = undoManager else { return }
-        let before = segments
+        let (before, beforeLayout) = (segments, layout)
         manager.registerUndo(withTarget: self) { model in
             MainActor.assumeIsolated {
                 model.snapshot(label)
                 model.segments = before
+                model.layout = beforeLayout
                 // The old status describes a change that no longer stands.
                 model.status = ""
             }
         }
         manager.setActionName(label)
     }
+
+    /// For edits that arrive continuously — typing, a color well — one undo step per burst.
+    /// Without a step of their own, undoing an earlier change would quietly revert them too.
+    private func burstSnapshot(_ label: String) {
+        if let manager = undoManager, manager.isUndoing || manager.isRedoing { return }
+        let now = Date()
+        defer { lastBurst = (label, now) }
+        if let last = lastBurst, last.label == label, now.timeIntervalSince(last.at) < 1 { return }
+        snapshot(label)
+    }
+
+    func beginEdit(_ label: String) { snapshot(label) }
 
     var currentIndex: Int {
         segments.firstIndex { $0.start <= currentTime && currentTime < $0.end }
@@ -131,6 +159,8 @@ final class EditorModel: ObservableObject {
                 self.isPlaying = false
                 self.exportName = url.deletingPathExtension().lastPathComponent
                 self.status = ""
+                // Emptied first so the last video's captions don't carry into this one.
+                self.segments = []
                 splitEvery(30)
                 observe(player)
                 // A new video is a fresh start; there's nothing sensible to undo back into.
@@ -197,7 +227,16 @@ final class EditorModel: ObservableObject {
         if bounds.count > 2, bounds[bounds.count - 1] - bounds[bounds.count - 2] < interval * 0.25 {
             bounds.remove(at: bounds.count - 2)
         }
-        segments = zip(bounds, bounds.dropFirst()).map { Segment(start: $0, end: $1) }
+        // Framing starts fresh, but captions carry over from whichever clip each new one starts in.
+        let old = segments
+        segments = zip(bounds, bounds.dropFirst()).map { start, end in
+            var clip = Segment(start: start, end: end)
+            if let from = old.first(where: { $0.start <= start && start < $0.end }) {
+                clip.topCaption = from.topCaption
+                clip.bottomCaption = from.bottomCaption
+            }
+            return clip
+        }
     }
 
     func addMarker(at time: Double) {
@@ -205,7 +244,8 @@ final class EditorModel: ObservableObject {
         guard time - segments[i].start >= minClip, segments[i].end - time >= minClip else { return }
         snapshot("Add Cut")
         let tail = Segment(start: time, end: segments[i].end, offset: segments[i].offset,
-                           zoom: segments[i].zoom, included: segments[i].included)
+                           zoom: segments[i].zoom, included: segments[i].included,
+                           topCaption: segments[i].topCaption, bottomCaption: segments[i].bottomCaption)
         segments[i].end = time
         segments.insert(tail, at: i + 1)
     }
@@ -235,8 +275,9 @@ final class EditorModel: ObservableObject {
     func clearMarkers() {
         guard duration > 0 else { return }
         snapshot("Merge Into One Clip")
-        let offset = segments.first?.offset ?? CGPoint(x: 0.5, y: 0.5)
-        segments = [Segment(start: 0, end: duration, offset: offset)]
+        let first = segments.first
+        segments = [Segment(start: 0, end: duration, offset: first?.offset ?? CGPoint(x: 0.5, y: 0.5),
+                            topCaption: first?.topCaption ?? "", bottomCaption: first?.bottomCaption ?? "")]
     }
 
     // MARK: - Choosing clips
@@ -270,7 +311,7 @@ final class EditorModel: ObservableObject {
         if cropDragStart == nil {
             snapshot("Reframe")
             // Pick up from whatever is on screen, then decide what the drag means.
-            segments[i].offset = segments[i].offset(at: currentTime, source: displaySize)
+            segments[i].offset = segments[i].offset(at: currentTime, source: displaySize, aspect: aspect)
             // An automatic pan is replaced by the hand on the frame; hand-set keys are kept
             // and edited, the way an editor's auto-keyframe does it.
             if segments[i].isTracked { segments[i].pan = [] }
@@ -295,7 +336,7 @@ final class EditorModel: ObservableObject {
         guard segments.indices.contains(currentIndex) else { return }
         let i = currentIndex
         snapshot("Add Keyframe")
-        let offset = segments[i].offset(at: currentTime, source: displaySize)
+        let offset = segments[i].offset(at: currentTime, source: displaySize, aspect: aspect)
         if !segments[i].panIsManual {
             segments[i].pan = []
             segments[i].panIsManual = true
@@ -316,14 +357,14 @@ final class EditorModel: ObservableObject {
         guard segments.indices.contains(currentIndex) else { return }
         snapshot("Clear Pan")
         segments[currentIndex].offset = segments[currentIndex].offset(at: currentTime,
-                                                                      source: displaySize)
+                                                                      source: displaySize, aspect: aspect)
         segments[currentIndex].pan = []
         segments[currentIndex].panIsManual = false
         status = ""
     }
 
     private func setKey(on clip: Int, at time: Double, offset: CGPoint) {
-        let subject = CropMath.subject(centeredBy: offset, source: displaySize,
+        let subject = CropMath.subject(centeredBy: offset, source: displaySize, aspect: aspect,
                                        zoom: segments[clip].zoom)
         let point = TrackPoint(time: time, subject: subject)
         // Within a frame or so of an existing key counts as the same key.
@@ -426,6 +467,80 @@ final class EditorModel: ObservableObject {
         }
     }
 
+    // MARK: - Captions and letterbox
+
+    func caption(top: Bool) -> String {
+        top ? currentSegment.topCaption : currentSegment.bottomCaption
+    }
+
+    func setCaption(_ text: String, top: Bool) {
+        guard segments.indices.contains(currentIndex), caption(top: top) != text else { return }
+        burstSnapshot("Edit Caption")
+        if top { segments[currentIndex].topCaption = text } else { segments[currentIndex].bottomCaption = text }
+    }
+
+    func applyCaptionsToAll() {
+        snapshot("Apply Text To All Clips")
+        let (top, bottom) = (currentSegment.topCaption, currentSegment.bottomCaption)
+        for i in segments.indices {
+            segments[i].topCaption = top
+            segments[i].bottomCaption = bottom
+        }
+    }
+
+    /// Bars can't eat into the footage past `StoryLayout.minBand`; whichever bar you're dragging
+    /// stops when it would.
+    func setBar(_ height: CGFloat, top: Bool) {
+        let other = top ? layout.bottomBar : layout.topBar
+        let clamped = min(max(height.rounded(), 0), layout.maxBars - other)
+        if top { layout.topBar = clamped } else { layout.bottomBar = clamped }
+    }
+
+    /// `nil` takes the bars away; otherwise equal bars leaving a band of that width-to-height.
+    func applyBand(_ ratio: CGFloat?) {
+        snapshot("Letterbox")
+        let bar = ratio.map(StoryLayout.bars(for:)) ?? 0
+        layout.topBar = bar
+        layout.bottomBar = bar
+    }
+
+    func bandMatches(_ ratio: CGFloat?) -> Bool {
+        let bar = ratio.map(StoryLayout.bars(for:)) ?? 0
+        return layout.topBar == bar && layout.bottomBar == bar
+    }
+
+    func setBarColor(_ color: CGColor) {
+        burstSnapshot("Bar Color")
+        layout.barColor = RGBA(color)
+    }
+
+    func setTextColor(_ color: CGColor) {
+        burstSnapshot("Text Color")
+        layout.textColor = RGBA(color)
+    }
+
+    func setFont(_ name: String, top: Bool) {
+        snapshot("Font")
+        if top { layout.top.fontName = name } else { layout.bottom.fontName = name }
+    }
+
+    func setFontSize(_ size: CGFloat, top: Bool) {
+        let clamped = min(max(size.rounded(), StoryLayout.sizeRange.lowerBound), StoryLayout.sizeRange.upperBound)
+        if top { layout.top.size = clamped } else { layout.bottom.size = clamped }
+    }
+
+    /// Re-rendered only when what it draws changes — the view asks for it on every playhead tick.
+    func previewOverlay() -> CGImage? {
+        let clip = currentSegment
+        if let cache = overlayCache, cache.layout == layout,
+           cache.top == clip.topCaption, cache.bottom == clip.bottomCaption {
+            return cache.image
+        }
+        let image = CaptionRenderer.overlay(layout: layout, top: clip.topCaption, bottom: clip.bottomCaption)
+        overlayCache = (layout, clip.topCaption, clip.bottomCaption, image)
+        return image
+    }
+
     // MARK: - Export
 
     var exportBase: String {
@@ -448,6 +563,7 @@ final class EditorModel: ObservableObject {
         isExporting = true
         exportProgress = 0
         let base = exportBase
+        let layout = self.layout
         Task {
             let folder = desktop.appendingPathComponent("\(base) Story")
             try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -458,9 +574,12 @@ final class EditorModel: ObservableObject {
                 let output = folder.appendingPathComponent(String(format: "%@_%02d.mp4", base, i + 1))
                 let range = CMTimeRange(start: CMTime(seconds: clip.start, preferredTimescale: 600),
                                         end: CMTime(seconds: clip.end, preferredTimescale: 600))
+                let overlay = CaptionRenderer.overlay(layout: layout, top: clip.topCaption,
+                                                      bottom: clip.bottomCaption)
                 do {
                     try await Exporter.export(source: url, range: range, offset: clip.offset,
-                                              zoom: clip.zoom, pan: clip.pan, to: output)
+                                              zoom: clip.zoom, pan: clip.pan, layout: layout,
+                                              overlay: overlay, to: output)
                 } catch {
                     failed += 1
                     status = "Clip \(i + 1): \(error.localizedDescription)"

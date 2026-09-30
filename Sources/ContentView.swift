@@ -45,8 +45,21 @@ struct EditorView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            PreviewView()
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            GeometryReader { geo in
+                let storyWidth = max((geo.size.height - 32) * 9 / 16, 140)
+                HStack(spacing: 0) {
+                    PreviewView()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    Divider()
+                    StoryPreview()
+                        .padding(16)
+                        .frame(width: storyWidth + 32)
+                        .background(Color(white: 0.1))
+                    Divider()
+                    StoryPanel()
+                        .frame(width: 290)
+                }
+            }
 
             VStack(spacing: 10) {
                 TransportBar()

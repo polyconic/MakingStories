@@ -30,7 +30,7 @@ cut.
 frame out past the footage and gives you bars, which is sometimes what you want. **Apply to All**
 gives every clip the current clip's framing.
 
-**Following a moving subject.** **Track** analyses the clip and pans to follow whoever's in it —
+**Following a moving subject.** **Track** analyzes the clip and pans to follow whoever's in it —
 Vision looks for a face, then a person, then whatever it reads as salient, so footage with nobody
 in it still follows something. Note that a clip with no room to pan can't do anything: an
 already-vertical source at 100% zoom is the whole frame, so zoom in first.
@@ -39,6 +39,19 @@ already-vertical source at 100% zoom is the whole frame, so zoom in first.
 playhead where you want it, frame the shot, press `K`. Move the playhead, drag the frame, and it
 keyframes again automatically. Diamonds appear on the timeline — click to jump to one,
 double-click to remove it. **Clear Pan** drops back to a fixed frame.
+
+**Letterbox and captions**, for the Reels and TikTok format with text above and below the
+footage. Pick a band — **4:5**, **1:1**, **16:9** — or set the top and bottom bars separately. The
+footage is cropped to fit the band, so a 1:1 band means a square crop, and the frame you drag on
+the source takes that shape. Each clip has its own top and bottom text; **Apply Text to All
+Clips** copies the current clip's to the rest. Any installed font, with a short list of good
+caption faces at the top, and switching family keeps the weight you had so a bold caption stays
+bold. Text that fits in its bar is centered in it; text that doesn't sits over the footage with a
+shadow, clear of the app chrome Reels and TikTok draw at the top and bottom of the screen.
+
+The preview beside the source is the export — it shows the exact image that gets burned in. The
+letterbox and text styling are remembered between launches, so a campaign is set up once, not per
+video.
 
 **Choosing what to export.** Every clip has a checkmark badge on the timeline; click it to leave
 that clip out. **Only This** exports just the clip under the playhead. Numbering runs over what

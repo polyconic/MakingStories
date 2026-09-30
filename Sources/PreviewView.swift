@@ -48,9 +48,10 @@ struct PreviewView: View {
             let video = CropMath.videoRect(container: geo.size, content: model.displaySize)
             let scale = model.displaySize.width > 0 ? video.width / model.displaySize.width : 1
             let clip = model.currentSegment
-            let source = CropMath.cropRect(source: model.displaySize,
+            let source = CropMath.cropRect(source: model.displaySize, aspect: model.aspect,
                                            offset: clip.offset(at: model.currentTime,
-                                                               source: model.displaySize),
+                                                               source: model.displaySize,
+                                                               aspect: model.aspect),
                                            zoom: clip.zoom)
             let crop = CGRect(x: video.minX + source.minX * scale, y: video.minY + source.minY * scale,
                               width: source.width * scale, height: source.height * scale)
